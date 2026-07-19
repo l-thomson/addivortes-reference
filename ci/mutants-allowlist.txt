@@ -1,0 +1,8 @@
+# Reviewed cargo-mutants survivor allowlist (release-gate mutation leg).
+#
+# One entry per line, in the `file:line: mutant-name` form printed as
+# SURVIVOR by ci/check-mutants.py. Every entry MUST carry a preceding
+# comment explaining why the survivor is acceptable (e.g. the mutation is
+# behaviourally equivalent, or it only perturbs a diagnostic message) and
+# the review date. An entry without a justification comment fails review,
+# not the script.

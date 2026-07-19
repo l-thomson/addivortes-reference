@@ -1,0 +1,36 @@
+Package: addivortesr
+Title: Bayesian Additive Voronoi Tessellation Regression
+Version: 0.1.0
+Authors@R:
+    person("Leo", "Thomson", , "leo@feasibly.co.uk", role = c("aut", "cre"))
+Description: Bindings to the 'addivortes' Rust crate, an implementation of
+    the AddiVortes method of Stone and Gosling (2025)
+    <doi:10.1080/10618600.2024.2414104>: Bayesian regression on a sum of
+    Voronoi tessellations, sampled by a Gibbs backfitting sampler with
+    structural Metropolis-Hastings moves. Provides fitting with Gaussian,
+    robust Student-t, and binary probit response families, posterior-mean
+    and per-draw prediction, posterior-predictive and credible intervals,
+    pointwise log-likelihood for 'loo', draws export for 'posterior', and
+    'parsnip' engine registration. Note this package is NOT the original
+    authors' 'AddiVortes' R implementation; it wraps the 'addivortes' Rust
+    crate. The package name is provisional pre-release.
+License: MIT + file LICENSE
+URL: https://github.com/l-thomson/addivortes
+BugReports: https://github.com/l-thomson/addivortes/issues
+Depends:
+    R (>= 4.2)
+Imports:
+    jsonlite,
+    stats
+Suggests:
+    loo,
+    parsnip,
+    posterior,
+    rlang,
+    testthat (>= 3.0.0),
+    tibble
+Config/testthat/edition: 3
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE, load = "source")
+SystemRequirements: Cargo (Rust's package manager), rustc (>= 1.85)
+Config/roxygen2/version: 8.0.0

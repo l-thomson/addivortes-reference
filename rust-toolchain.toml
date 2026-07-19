@@ -1,0 +1,7 @@
+# The dev + golden-chain toolchain anchor (CI plan B0). Local builds and the
+# reproducibility contract are pinned to the exact MSRV patch release; CI jobs
+# that need a different toolchain (pinned-clippy, rustdoc-JSON nightly) select
+# theirs explicitly and override this file.
+[toolchain]
+channel = "1.85.1"
+components = ["rustfmt", "clippy"]

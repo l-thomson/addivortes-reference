@@ -1,0 +1,15 @@
+# Ban the built-in f64 transcendental methods. Rust's standard library is permitted by
+# its own specification to produce platform-dependent results for these, which would break
+# the bit-exact reproducibility contract (README "Reproducibility", enforced by tests/readme_contract.rs). Use the deterministic `mathsfn`
+# wrappers (over `libm`) instead. This list grows as `mathsfn` gains more wrappers.
+disallowed-methods = [
+    { path = "f64::ln", reason = "use mathsfn::ln (libm) for cross-platform determinism" },
+    { path = "f64::ln_1p", reason = "use mathsfn::ln_1p (libm) for cross-platform determinism" },
+    { path = "f64::exp", reason = "use mathsfn::exp (libm) for cross-platform determinism" },
+    { path = "f64::exp_m1", reason = "use mathsfn::exp_m1 (libm) for cross-platform determinism" },
+    { path = "f64::acos", reason = "use mathsfn::acos (libm) for cross-platform determinism" },
+    { path = "f64::sin", reason = "use mathsfn::sin (libm) for cross-platform determinism" },
+    { path = "f64::cos", reason = "use mathsfn::cos (libm) for cross-platform determinism" },
+    { path = "f64::powf", reason = "use mathsfn::powf (libm) for cross-platform determinism" },
+    { path = "f64::powi", reason = "use mathsfn::powi (pinned squaring) for cross-platform determinism" },
+]

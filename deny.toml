@@ -1,0 +1,58 @@
+# Supply-chain gate (cargo-deny): the sole per-PR supply-chain check.
+#
+# The dependency policy: exactly six direct runtime deps, plus an
+# explicitly allow-listed transitive closure. `[bans].allow` below is that
+# allow-list: cargo-deny denies any crate that is not on it, so a new transitive
+# dependency appearing anywhere in the runtime graph fails CI until it is reviewed
+# and added here deliberately.
+#
+# Dev-dependencies are exempt from the policy (`exclude-dev = true`): the gate
+# protects what ships, not what tests.
+
+[graph]
+all-features = false
+no-default-features = false
+exclude-dev = true
+
+[advisories]
+# RustSec advisories: vulnerabilities and unsound crates are denied by default.
+# Also fail on yanked crate versions and on any unmaintained crate in the graph.
+yanked = "deny"
+unmaintained = "all"
+ignore = []
+
+[licenses]
+# Everything in the runtime closure must be permissively licensed. Unicode-3.0
+# covers `unicode-ident` (the only non-MIT/Apache artefact in the closure).
+allow = ["MIT", "Apache-2.0", "Unicode-3.0"]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+highlight = "all"
+# The six direct runtime deps …
+allow = [
+    { crate = "addivortes", reason = "the crate itself" },
+    { crate = "thiserror", reason = "direct: error enum derive" },
+    { crate = "rand", reason = "direct: sampling traits/distributions" },
+    { crate = "rand_chacha", reason = "direct: ChaCha8Rng, the sampler RNG" },
+    { crate = "rand_distr", reason = "direct: statistical distributions" },
+    { crate = "rand_core", reason = "direct: the extension traits name rand_core::Rng" },
+    { crate = "libm", reason = "direct: pinned deterministic transcendentals" },
+    # … plus the reviewed transitive closure:
+    { crate = "thiserror-impl", reason = "transitive: thiserror's derive macro" },
+    { crate = "proc-macro2", reason = "transitive: proc-macro stack for thiserror-impl" },
+    { crate = "quote", reason = "transitive: proc-macro stack for thiserror-impl" },
+    { crate = "syn", reason = "transitive: proc-macro stack for thiserror-impl" },
+    { crate = "unicode-ident", reason = "transitive: proc-macro stack for thiserror-impl" },
+    { crate = "ppv-lite86", reason = "transitive: rand_chacha's SIMD backend" },
+    { crate = "zerocopy", reason = "transitive: ppv-lite86's safe transmutes" },
+    { crate = "num-traits", reason = "transitive: rand_distr's float abstraction (libm path)" },
+    { crate = "autocfg", reason = "build-dep of num-traits" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

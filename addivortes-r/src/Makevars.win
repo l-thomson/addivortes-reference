@@ -1,0 +1,22 @@
+# Windows build: same recipe as Makevars against the windows-gnu target
+# (Rtools toolchain). The extra system libs are what the Rust std/getrandom
+# stack links on Windows.
+TARGET = $(subst 64,x86_64,$(subst 32,i686,$(WIN)))-pc-windows-gnu
+
+TARGET_DIR = ./rust/target
+LIBDIR = $(TARGET_DIR)/$(TARGET)/release
+STATLIB = $(LIBDIR)/libaddivortesr.a
+PKG_LIBS = -L$(LIBDIR) -laddivortesr -lws2_32 -ladvapi32 -luserenv -lbcrypt -lntdll
+
+all: $(SHLIB)
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	export PATH="$(PATH);$(USERPROFILE)\\.cargo\\bin" && \
+	  cargo build --target=$(TARGET) --lib --release --locked --manifest-path=./rust/Cargo.toml --target-dir $(TARGET_DIR)
+
+clean:
+	rm -Rf $(SHLIB) $(STATLIB) $(OBJECTS) $(TARGET_DIR)
+
+.PHONY: all clean $(STATLIB)

@@ -1,0 +1,180 @@
+# The calibration gate: the calibration rung of the validation ladder (see
+# src/calibration.rs for the ladder, CONTRIBUTING.md for how to run each rung).
+#
+# Triggered only when a PR touches the statistically sensitive surface:
+# a stochastic test earns its run through a relevant code change, never a
+# schedule. Runs the SBC + Geweke battery over the non-default extension configs,
+# delegates the SBC uniformity verdict to R (bayesplot's
+# Säilynoja–Bürkner–Vehtari ECDF simultaneous band, the authors' own
+# implementation, deliberately not ported), and re-proves the gate's teeth on
+# every run by injecting a known-wrong RD prior ratio: SBC --expect-fail +
+# the Geweke negative control inside the Rust suite.
+#
+# The check is advisory until `calibration / battery` is added to the
+# repository's required checks in branch protection; it posts its verdict
+# on the PR (comment + check result) either way.
+#
+# Pinning discipline: Rust toolchain + nextest exactly as ci.yml; the R side
+# pins bayesplot 1.15.0 (installed from a date-pinned Posit snapshot and
+# version-guarded inside ci/sbc-ecdf-check.R). The script itself re-validates
+# the published critical values on a uniform-null
+# fixture (--self-test) before judging anything, every run.
+
+name: calibration
+
+on:
+  pull_request:
+    paths:
+      # Everything under src/ can move the sampled chain, so the gate
+      # triggers on all of it, deliberately a glob rather than a hand-listed
+      # set of files: a list of names drifts into silent under-coverage as
+      # files move; a glob cannot.
+      - "src/**"
+      # The battery's own drivers: the calibration_acceptance binary lives in
+      # tests/, so a change to it must trigger the gate that runs it.
+      - "tests/**"
+      # A rand / rand_core / rand_distr / libm bump is chain-altering by
+      # definition (the reproducibility contract in src/lib.rs), so the
+      # manifest and the lockfile are part of the sensitive surface.
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "ci/sbc-ecdf-check.R"
+      - ".github/workflows/calibration.yml"
+
+permissions:
+  contents: read
+  pull-requests: write # the advisory verdict comment
+
+concurrency:
+  group: calibration-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  STAT_GATES_DIR: ${{ github.workspace }}/target/stat-gates
+
+jobs:
+  battery:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-nextest@0.9.138
+
+      # --- Rust batteries (determinism profile: optimised + assertions) ---
+      # Geweke + pure-prior assert inside the test process; SBC emits rank
+      # CSVs for the R verdict. Calibration-leg N (sized from measured per-fit
+      # wall-clock): SBC 300 replications × 99 ranked draws (thin 10),
+      # Geweke 4000/1500 (thin 20).
+      #
+      # Selector discipline: one nextest run per selector, never a single
+      # `A or B or C` union. nextest already errors when a run matches no
+      # tests, but a union hides a stale clause: if B stops matching, A and C
+      # still do, the run is non-empty, and the gate goes green having quietly
+      # dropped a test. Split, each clause has to match on its own, and
+      # `--no-tests fail` turns a stale one red.
+      #
+      # The loop records failures instead of aborting, so a Geweke failure
+      # still lets the SBC ranks be emitted and get their R verdict: the point
+      # of the gate is a complete report, not a fast one.
+      - name: Geweke + pure-prior controls + SBC rank emission
+        run: |
+          set -uo pipefail
+          : > geweke-log.txt
+          status=0
+          for selector in \
+            'test(/^stat_gates::(sbc_ranks|geweke|pure_prior)/)' \
+            'test(/^stat_gates::battery_public_driver/)' \
+            'test(/^extensions::inclusion::dart::tests::isolated_update/)' \
+            'binary(calibration_acceptance)'
+          do
+            echo "::group::${selector}"
+            if ! cargo +1.85.1 nextest run --locked --cargo-profile determinism \
+              --run-ignored ignored-only --no-fail-fast --no-tests fail \
+              --success-output immediate \
+              -E "${selector}" \
+              2>&1 | tee -a geweke-log.txt
+            then
+              echo "::error::calibration selector failed or matched no tests: ${selector}"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "${status}"
+
+      # --- R verdict (band test on the emitted ranks) ---
+      - name: Provision pinned R environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends r-base-core
+          R --version | head -1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/R/library
+          key: r-library-bayesplot-1.15.0-ppm-2026-07-01-${{ runner.os }}
+      - name: Install pinned bayesplot (date-pinned Posit snapshot)
+        run: |
+          mkdir -p ~/R/library
+          Rscript -e '
+            .libPaths("~/R/library")
+            if (!requireNamespace("bayesplot", quietly = TRUE)) {
+              options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(),
+                paste(getRversion(), R.version[["platform"]], R.version[["arch"]], R.version[["os"]])),
+                repos = c(PPM = "https://packagemanager.posit.co/cran/__linux__/noble/2026-07-01"))
+              install.packages("bayesplot")
+            }
+            stopifnot(packageVersion("bayesplot") == "1.15.0")'
+      - name: SBC ECDF-band verdict (self-test + real configs + injection teeth-check)
+        run: |
+          R_LIBS_USER=~/R/library Rscript ci/sbc-ecdf-check.R \
+            --summary sbc-summary.md \
+            --expect-fail "$STAT_GATES_DIR/sbc-injection-rd.csv" \
+            "$STAT_GATES_DIR/sbc-small-p.csv" \
+            "$STAT_GATES_DIR/sbc-spherical.csv" \
+            "$STAT_GATES_DIR/sbc-weighted-inclusion.csv" \
+            "$STAT_GATES_DIR/sbc-h-variance.csv" \
+            "$STAT_GATES_DIR/sbc-soft-membership.csv" \
+            "$STAT_GATES_DIR/sbc-dart.csv"
+
+      # --- Visible verdict on the PR (advisory) ---
+      - name: Publish verdict
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          {
+            echo "## calibration (advisory)"
+            echo
+            echo "Overall: **${{ job.status }}**"
+            echo
+            [ -f sbc-summary.md ] && cat sbc-summary.md
+            echo
+            echo '<details><summary>Geweke KS cross-check</summary>'
+            echo
+            echo '```'
+            grep -E "geweke\[|battery\[|pure-prior" geweke-log.txt || echo "battery did not complete"
+            echo '```'
+            echo '</details>'
+            echo
+            echo "_This check is advisory; it becomes blocking when added to the repository's required checks._"
+          } > verdict.md
+          cat verdict.md >> "$GITHUB_STEP_SUMMARY"
+          # A fork PR's token is read-only regardless of the workflow's
+          # `pull-requests: write` grant, so the comment would fail the job;
+          # the verdict still lands in the step summary above.
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file verdict.md --edit-last --create-if-none
+          else
+            echo "fork PR ($HEAD_REPO): verdict comment skipped, see the step summary"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: calibration-ranks
+          path: target/stat-gates/

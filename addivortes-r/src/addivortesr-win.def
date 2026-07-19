@@ -1,0 +1,3 @@
+LIBRARY addivortesr.dll
+EXPORTS
+R_init_addivortesr

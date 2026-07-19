@@ -1,0 +1,145 @@
+addivortes v0.1.0
+├── rand v0.10.1
+│   └── rand_core v0.10.1
+├── libm feature "default"
+│   ├── libm v0.2.16
+│   └── libm feature "arch"
+│       └── libm v0.2.16
+├── rand_core feature "default"
+│   └── rand_core v0.10.1
+├── rand_chacha feature "default"
+│   ├── rand_chacha v0.10.0
+│   │   ├── ppv-lite86 feature "simd"
+│   │   │   └── ppv-lite86 v0.2.21
+│   │   │       ├── zerocopy feature "default"
+│   │   │       │   └── zerocopy v0.8.52
+│   │   │       └── zerocopy feature "simd"
+│   │   │           └── zerocopy v0.8.52
+│   │   └── rand_core feature "default" (*)
+│   └── rand_chacha feature "std"
+│       ├── rand_chacha v0.10.0 (*)
+│       └── ppv-lite86 feature "std"
+│           └── ppv-lite86 v0.2.21 (*)
+├── rand_distr feature "default"
+│   ├── rand_distr v0.6.0
+│   │   ├── rand v0.10.1 (*)
+│   │   └── num-traits feature "libm"
+│   │       └── num-traits v0.2.19
+│   │           └── libm feature "default" (*)
+│   │           [build-dependencies]
+│   │           └── autocfg feature "default"
+│   │               └── autocfg v1.5.1
+│   └── rand_distr feature "std"
+│       ├── rand_distr v0.6.0 (*)
+│       ├── rand feature "std"
+│       │   ├── rand v0.10.1 (*)
+│       │   └── rand feature "alloc"
+│       │       └── rand v0.10.1 (*)
+│       └── rand_distr feature "alloc"
+│           ├── rand_distr v0.6.0 (*)
+│           └── rand feature "alloc" (*)
+└── thiserror feature "default"
+    ├── thiserror v2.0.18
+    │   └── thiserror-impl feature "default"
+    │       └── thiserror-impl v2.0.18 (proc-macro)
+    │           ├── proc-macro2 feature "default"
+    │           │   ├── proc-macro2 v1.0.106
+    │           │   │   └── unicode-ident feature "default"
+    │           │   │       └── unicode-ident v1.0.24
+    │           │   └── proc-macro2 feature "proc-macro"
+    │           │       └── proc-macro2 v1.0.106 (*)
+    │           ├── quote feature "default"
+    │           │   ├── quote v1.0.46
+    │           │   │   └── proc-macro2 v1.0.106 (*)
+    │           │   └── quote feature "proc-macro"
+    │           │       ├── quote v1.0.46 (*)
+    │           │       └── proc-macro2 feature "proc-macro" (*)
+    │           └── syn feature "default"
+    │               ├── syn v2.0.118
+    │               │   ├── proc-macro2 v1.0.106 (*)
+    │               │   ├── quote v1.0.46 (*)
+    │               │   └── unicode-ident feature "default" (*)
+    │               ├── syn feature "clone-impls"
+    │               │   └── syn v2.0.118 (*)
+    │               ├── syn feature "derive"
+    │               │   └── syn v2.0.118 (*)
+    │               ├── syn feature "parsing"
+    │               │   └── syn v2.0.118 (*)
+    │               ├── syn feature "printing"
+    │               │   └── syn v2.0.118 (*)
+    │               └── syn feature "proc-macro"
+    │                   ├── syn v2.0.118 (*)
+    │                   ├── proc-macro2 feature "proc-macro" (*)
+    │                   └── quote feature "proc-macro" (*)
+    └── thiserror feature "std"
+        └── thiserror v2.0.18 (*)
+[dev-dependencies]
+├── proptest feature "alloc"
+│   └── proptest v1.11.0
+│       ├── num-traits v0.2.19 (*)
+│       ├── rand_chacha v0.9.0
+│       │   ├── rand_core feature "default"
+│       │   │   └── rand_core v0.9.5
+│       │   └── ppv-lite86 feature "simd" (*)
+│       ├── bitflags feature "default"
+│       │   └── bitflags v2.13.0
+│       ├── rand feature "alloc"
+│       │   └── rand v0.9.4
+│       │       └── rand_core v0.9.5
+│       ├── rand_xorshift feature "default"
+│       │   └── rand_xorshift v0.4.0
+│       │       └── rand_core feature "default" (*)
+│       └── unarray feature "default"
+│           └── unarray v0.1.4
+├── proptest feature "no_std"
+│   ├── proptest v1.11.0 (*)
+│   └── num-traits feature "libm" (*)
+├── serde_json feature "default"
+│   ├── serde_json v1.0.150
+│   │   ├── memchr v2.8.2
+│   │   ├── serde_core v1.0.228
+│   │   ├── itoa feature "default"
+│   │   │   └── itoa v1.0.18
+│   │   └── zmij feature "default"
+│   │       └── zmij v1.0.21
+│   └── serde_json feature "std"
+│       ├── serde_json v1.0.150 (*)
+│       ├── memchr feature "std"
+│       │   ├── memchr v2.8.2
+│       │   └── memchr feature "alloc"
+│       │       └── memchr v2.8.2
+│       └── serde_core feature "std"
+│           └── serde_core v1.0.228
+├── serde_json feature "float_roundtrip"
+│   └── serde_json v1.0.150 (*)
+└── sha2 feature "default"
+    ├── sha2 v0.11.0
+    │   ├── cfg-if feature "default"
+    │   │   └── cfg-if v1.0.4
+    │   ├── cpufeatures feature "default"
+    │   │   └── cpufeatures v0.3.0
+    │   └── digest feature "default"
+    │       ├── digest v0.11.3
+    │       │   ├── block-buffer feature "default"
+    │       │   │   └── block-buffer v0.12.1
+    │       │   │       └── hybrid-array feature "default"
+    │       │   │           └── hybrid-array v0.4.13
+    │       │   │               ├── typenum feature "const-generics"
+    │       │   │               │   └── typenum v1.20.1
+    │       │   │               └── typenum feature "default"
+    │       │   │                   └── typenum v1.20.1
+    │       │   ├── const-oid feature "default"
+    │       │   │   └── const-oid v0.10.2
+    │       │   └── crypto-common feature "default"
+    │       │       └── crypto-common v0.2.2
+    │       │           └── hybrid-array feature "default" (*)
+    │       └── digest feature "block-api"
+    │           └── digest v0.11.3 (*)
+    ├── sha2 feature "alloc"
+    │   ├── sha2 v0.11.0 (*)
+    │   └── digest feature "alloc"
+    │       └── digest v0.11.3 (*)
+    └── sha2 feature "oid"
+        ├── sha2 v0.11.0 (*)
+        └── digest feature "oid"
+            └── digest v0.11.3 (*)

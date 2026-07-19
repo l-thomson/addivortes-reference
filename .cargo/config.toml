@@ -1,0 +1,11 @@
+# Determinism (the reproducibility contract in README.md). Build for a *generic* CPU rather than whatever extra
+# instructions the build machine happens to have (e.g. -Ctarget-cpu=native). Without
+# this, code built on one machine could use CPU features that change floating-point
+# results elsewhere, breaking the bit-exact reproducibility contract.
+#
+# NOTE: target-cpu is a compiler flag, not a Cargo profile key, so it lives here in
+# .cargo/config.toml, not in [profile.release] (Cargo rejects it there). An explicit
+# RUSTFLAGS in the environment overrides this, which is why the reproducibility contract
+# forbids overriding RUSTFLAGS (documented in CONTRIBUTING.md).
+[build]
+rustflags = ["-Ctarget-cpu=generic"]

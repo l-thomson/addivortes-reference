@@ -1,0 +1,22 @@
+# Cargo build output, at any depth: an anchored rule only covers the paths it
+# names, so a crate whose own .gitignore is removed silently starts tracking
+# its target/ directory.
+target/
+
+# Python binding working state
+/addivortes-py/.venv*
+/addivortes-py/dist
+/addivortes-py/python/addivortes/*.so
+__pycache__/
+*.egg-info/
+
+# R binding working state
+/addivortes-r/src/*.o
+/addivortes-r/src/*.so
+/addivortes-r/src/*.dll
+/addivortes-r/*.Rcheck
+
+# Publisher PDFs (the papers and their supplements). Kept locally for reference;
+# never tracked, so they cannot reach a public tree.
+/maths
+

@@ -1,0 +1,6 @@
+# nextest policy: no retries anywhere by default; a deterministic test
+# (golden, L1, L1.5) that "passes on retry" is hiding a reproducibility bug,
+# so flaky results must fail. Any suite that genuinely needs retries gets its
+# own profile with them stated explicitly; the default stays strict.
+[profile.default]
+retries = 0

@@ -1,0 +1,124 @@
+# Scheduled (and on-demand) drift-catching jobs: everything that is
+# deterministic-but-slow or needs periodic re-validation independent of any
+# PR. Statistical suites do not live here; they are PR-triggered
+# (calibration.yml) or manually triggered (release-gate.yml).
+#
+# Cadence: WEEKLY, not nightly. These jobs exist to
+# catch runner-image/toolchain/dependency drift, and GitHub refreshes its
+# hosted runner images on a weekly cadence (actions/runner-images: "images
+# are updated on a weekly basis", multi-day rollout): a nightly run of an
+# unchanged codebase against an unchanged image buys nothing and bills the
+# macOS golden matrix ~10x for it. Monday 03:17 UTC trails the typical
+# image-rollout window.
+
+name: scheduled
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      golden_write:
+        description: >-
+          Capture golden vectors on every target and upload them as
+          artifacts for a reviewed re-baseline commit (the golden job is
+          expected to end red: a capture must never look like a pass).
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  minimal-versions:
+    # Proves the declared lower bounds of the six direct deps actually build:
+    # resolve every direct dependency to its minimum version, then test on the MSRV.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: nightly-2026-06-01
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      # Rewrites Cargo.lock to minimal direct versions, so no --locked here.
+      - run: cargo +nightly-2026-06-01 update -Zdirect-minimal-versions
+      - run: cargo +1.85.1 test
+
+  latest-stable:
+    # Early warning for breakage on the newest rustc (the dev anchor is 1.85.1).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: stable
+      - run: cargo +stable test --locked
+
+  golden:
+    # Per-target golden chain + predict vectors: bit-exact within a
+    # compilation target, validated on the full OS matrix weekly (macOS bills
+    # ~10×; golden drift comes from runner-image/toolchain bumps, not PR code,
+    # and images refresh weekly). Runs under the
+    # determinism profile (optimised + debug-assertions + overflow-checks).
+    # Targets without a checked-in vector skip with guidance.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-nextest@0.9.138
+      - if: ${{ inputs.golden_write != true }}
+        run: cargo +1.85.1 nextest run --locked --cargo-profile determinism -E 'binary(golden_chain)'
+      # Capture mode (workflow_dispatch input): GOLDEN_WRITE makes the test
+      # write the vectors and then deliberately fail, so a capture can never
+      # look like a pass; the vectors are uploaded for the reviewed
+      # re-baseline commit (CONTRIBUTING runbook).
+      - if: ${{ inputs.golden_write == true }}
+        run: cargo +1.85.1 nextest run --locked --cargo-profile determinism -E 'binary(golden_chain)' || true
+        env:
+          GOLDEN_WRITE: "1"
+        shell: bash
+      - if: ${{ inputs.golden_write == true }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: golden-${{ matrix.os }}
+          path: tests/golden/
+      # Same-process self-consistency + the target-independent stream anchors.
+      - run: cargo +1.85.1 nextest run --locked --cargo-profile determinism -E 'binary(determinism) + test(chacha8_integer_stream) + test(expand_seed)'
+
+  code-coverage:
+    # Informational only: kernel coverage % is not a gate; the gated check
+    # is error-variant reachability (src/gate_tests.rs). Uniform LLVM
+    # engine on all targets; runs in its own job so golden/stream tests stay
+    # uninstrumented. No schedule entitlement: an informational artifact
+    # nobody is required to read doesn't earn a recurring run; generate it
+    # on demand (workflow_dispatch) when someone wants the lcov.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-nextest@0.9.138,cargo-llvm-cov@0.8.7
+      - run: cargo +1.85.1 llvm-cov nextest --locked --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-lcov
+          path: lcov.info

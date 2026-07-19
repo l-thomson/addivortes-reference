@@ -1,0 +1,35 @@
+[build-system]
+requires = ["maturin>=1.14,<2"]
+build-backend = "maturin"
+
+[project]
+name = "addivortes"
+version = "0.1.0"
+description = "Bayesian additive Voronoi tessellation regression (AddiVortes): Python bindings for the addivortes Rust crate"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT OR Apache-2.0" }
+keywords = ["bayesian", "regression", "mcmc", "voronoi", "bart"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+dependencies = ["numpy>=1.22"]
+
+# Same targets as the crate's `repository` and the R package's URL/BugReports;
+# without these the PyPI page carries no link back to the source.
+[project.urls]
+Repository = "https://github.com/l-thomson/addivortes"
+Issues = "https://github.com/l-thomson/addivortes/issues"
+
+[project.optional-dependencies]
+sklearn = ["scikit-learn>=1.3"]
+arviz = ["arviz>=0.17"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "addivortes._native"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

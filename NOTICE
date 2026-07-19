@@ -1,0 +1,9 @@
+addivortes
+Copyright (c) 2026 Leo Thomson
+
+A Rust implementation of the AddiVortes method (Stone & Gosling, 2025). All
+credit for the method belongs to its authors. The original R package is
+"AddiVortes" (https://github.com/johnpaulgosling/AddiVortes), licensed GPL-3.
+
+This crate contains no code from the GPL-3 R package and is licensed under
+MIT OR Apache-2.0.

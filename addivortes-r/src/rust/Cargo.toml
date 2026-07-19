@@ -1,0 +1,28 @@
+# The Rust half of the R binding package: an extendr staticlib wrapping the
+# addivortes public API: config-level selection of the built-in shelf
+# (metrics, distances, response families, soft membership),
+# fit/predict/intervals, per-draw predictions and pointwise log-likelihood
+# (the posterior/loo adapters' primitives), save/load, diagnostics. The
+# trait-based extension points deliberately do NOT cross the FFI boundary
+# (researcher components are a Rust-side activity); what R selects is the
+# shelf.
+#
+# Never part of the addivortes package (the root crate's curated `include`
+# list excludes this directory).
+[package]
+name = "addivortesr"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "R bindings for the addivortes crate (Bayesian additive Voronoi tessellations)"
+publish = false
+
+[lib]
+name = "addivortesr"
+crate-type = ["staticlib"]
+
+[dependencies]
+addivortes = { version = "0.1.0", path = "../../..", features = ["serde"] }
+extendr-api = "0.8"
+serde_json = { version = "1", features = ["float_roundtrip"] }

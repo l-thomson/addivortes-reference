@@ -1,0 +1,380 @@
+# The fast per-commit gate: cheap gates first, Linux x86_64 only.
+#
+# Conventions:
+# - every third-party action is pinned to a full commit SHA;
+# - CI tools are installed as prebuilt binaries via taiki-e/install-action, never
+#   compiled. The one exception is cargo-public-api, which has no prebuilt
+#   anywhere (no release assets, no quickinstall build), so it is cargo-installed
+#   once at a pinned version and cached;
+# - the MSRV leg (1.85.1, from rust-toolchain.toml) runs only rustc/cargo;
+# - clippy is pinned to a fixed recent stable so a new Rust release cannot
+#   spontaneously red an unrelated commit.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+          components: rustfmt
+      - run: cargo +1.85.1 fmt --check
+
+  clippy:
+    needs: fmt
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.96.0
+          components: clippy
+      # Includes the mathsfn/libm disallowed-methods ban (clippy.toml;
+      # the reproducibility contract).
+      - run: cargo +1.96.0 clippy --all-targets --locked -- -D warnings
+
+  test:
+    needs: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-nextest@0.9.138
+      # nextest = process-per-test isolation; doctests run separately (nextest
+      # cannot run them). This leg also runs the target-independent ChaCha8
+      # integer-stream + splitmix64 key-bytes anchors (src/sampler.rs tests) and
+      # the libm-path compiled-config assertion (tests/determinism.rs).
+      - run: cargo +1.85.1 nextest run --locked
+      # The save/load surface (validated deserialisation, bit-identical
+      # round trip, custom-extension refusal) only compiles behind `serde`.
+      - run: cargo +1.85.1 nextest run --locked --features serde
+      - run: cargo +1.85.1 test --doc --locked
+      # The researcher walkthroughs are CI-gated: every extension-point template must
+      # pass its conformance/self-checks end-to-end, unedited; the embed
+      # (outer-Gibbs) example must run end-to-end.
+      - run: cargo +1.85.1 run --example template_moves --locked
+      - run: cargo +1.85.1 run --example template_coord --locked
+      - run: cargo +1.85.1 run --example template_distance --locked
+      - run: cargo +1.85.1 run --example template_inclusion --locked
+      - run: cargo +1.85.1 run --example template_cell_model --locked
+      - run: cargo +1.85.1 run --example template_response --locked
+      - run: cargo +1.85.1 run --example template_scale --locked
+      - run: cargo +1.85.1 run --example template_basis --locked
+      - run: cargo +1.85.1 run --example template_count_priors --locked
+      - run: cargo +1.85.1 run --example template_membership --locked
+      - run: cargo +1.85.1 run --example template_embed --locked
+
+  python:
+    # The Python binding: clippy-clean, wheel builds, and the pytest suite,
+    # including the cross-language golden test that pins a Python fit against
+    # the same per-target vector the Rust golden tests use, bit for bit.
+    needs: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+          components: clippy
+      # The runner image's own Python (a venv keeps PEP 668 happy and the
+      # job self-contained); the wheel is abi3-py39, so the exact minor
+      # version does not matter.
+      - run: cargo +1.85.1 clippy --manifest-path addivortes-py/Cargo.toml --all-targets --locked -- -D warnings
+      - run: python3 -m venv .ci-venv
+      - run: .ci-venv/bin/pip install maturin==1.14.1 pytest numpy scikit-learn arviz
+      - run: .ci-venv/bin/maturin build --release --locked -m addivortes-py/Cargo.toml -o dist
+      - run: .ci-venv/bin/pip install dist/*.whl
+      - run: .ci-venv/bin/python -m pytest addivortes-py/tests -q
+
+  r:
+    # The R binding: clippy-clean, the package installs (compiling the
+    # extendr staticlib), and the testthat suite, including the
+    # cross-language golden test that pins an R fit against the same
+    # per-target vector the Rust golden tests use, bit for bit. The bulk of
+    # the adapter dependencies come as distro binaries (fast, pinned by
+    # noble); parsnip's stack is pure R from CRAN.
+    needs: clippy
+    runs-on: ubuntu-24.04
+    env:
+      # A writable per-job R library: the package install compiles the Rust
+      # staticlib via cargo, so it must run as the (unprivileged) runner user
+      # with its own toolchain, never under sudo, which would lose it. So
+      # parsnip and the package both install here rather than the root-owned
+      # site library. The distro r-cran-* packages stay on the default
+      # (world-readable) site library, still visible via .libPaths().
+      R_LIBS_USER: ${{ github.workspace }}/.r-lib
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+          components: clippy
+      # R must be installed before any cargo invocation: extendr-ffi's build
+      # script generates its SEXPTYPE enum from the detected R headers, and
+      # OBJSXP (R >= 4.3.0) is referenced unconditionally by extendr-api, so
+      # clippy on the wrapper crate needs a modern R present to compile at all.
+      - run: sudo apt-get update
+      - run: >-
+          sudo apt-get install -y --no-install-recommends r-base-dev
+          r-cran-testthat r-cran-posterior r-cran-loo
+          r-cran-rlang r-cran-cli r-cran-vctrs r-cran-tibble r-cran-pillar
+          r-cran-purrr r-cran-withr r-cran-generics r-cran-globals
+          r-cran-lifecycle r-cran-magrittr r-cran-glue r-cran-prettyunits
+          r-cran-dplyr r-cran-tidyr r-cran-tidyselect
+      - run: cargo +1.85.1 clippy --manifest-path addivortes-r/src/rust/Cargo.toml --all-targets --locked -- -D warnings
+      - run: mkdir -p "$R_LIBS_USER"
+      - run: Rscript -e 'install.packages("parsnip", lib = Sys.getenv("R_LIBS_USER"), repos = "https://cloud.r-project.org")'
+      - run: R CMD INSTALL -l "$R_LIBS_USER" --no-multiarch addivortes-r
+      - run: Rscript -e 'library(addivortesr); testthat::test_dir("addivortes-r/tests/testthat", stop_on_failure = TRUE)'
+
+  r-docs:
+    # The R man-page gate. addivortes-r/man/*.Rd and NAMESPACE are roxygen2
+    # output, not hand-written, so they drift silently from the `#'` blocks in
+    # addivortes-r/R/ with nothing to catch it. They did: since 198bc1f
+    # addivortes.Rd documented 18 of 24 arguments and
+    # summary.addivortes_chains.Rd did not exist at all. Undocumented
+    # arguments are an `R CMD check` WARNING on a CRAN-facing package, not a
+    # NOTE. Same shape as the other snapshot gates: regenerate, diff, make the
+    # author commit the reviewed result.
+    #
+    # Three details here are load-bearing, not incidental:
+    #
+    # - `load_code = "source"` is passed EXPLICITLY. roxygenise() resolves its
+    #   load strategy (line 6) before it reads DESCRIPTION (line 11), so the
+    #   package's own `Roxygen: list(..., load = "source")` is ignored and the
+    #   default pkgload strategy runs pkgbuild::compile_dll -- a full cargo
+    #   release build of the staticlib -- just to write text files. Passed as
+    #   an argument it takes the intended path: ~2.5s, no compiler.
+    # - `git add --intent-to-add` before the diff. A plain `git diff
+    #   --exit-code` does not see untracked files, so a man page that is
+    #   MISSING ENTIRELY -- the actual drift here -- would leave this green.
+    # - roxygen2 is version-pinned. Rd output is version-dependent, and 8.0.0
+    #   rewrites `Config/roxygen2/version` in DESCRIPTION whenever the version
+    #   changes, so an unpinned resolve reds the gate for tooling reasons on an
+    #   otherwise-current tree. Pinned from the date-stamped Posit snapshot and
+    #   guarded at runtime, exactly as calibration.yml pins bayesplot.
+    #
+    # Not covered: R/extendr-wrappers.R (extendr output, regenerated only via
+    # devtools) and `R CMD check` itself, which no workflow runs --
+    # addivortes-r/tools/cran-check.sh is wired to nothing.
+    needs: fmt
+    runs-on: ubuntu-24.04
+    env:
+      R_LIBS_USER: ${{ github.workspace }}/.r-lib
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y --no-install-recommends r-base-core
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.r-lib
+          key: r-docs-roxygen2-8.0.0-ppm-2026-07-01-${{ runner.os }}
+      - name: Install pinned roxygen2
+        run: |
+          mkdir -p "$R_LIBS_USER"
+          Rscript -e '
+            options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(),
+              paste(getRversion(), R.version[["platform"]], R.version[["arch"]], R.version[["os"]])),
+              repos = c(PPM = "https://packagemanager.posit.co/cran/__linux__/noble/2026-07-01"))
+            # jsonlite is an Imports: the source load strategy attaches it. loo
+            # is a Suggests, installed only so the @param links into it resolve
+            # quietly rather than warning.
+            for (p in c("roxygen2", "jsonlite", "loo")) {
+              if (!requireNamespace(p, quietly = TRUE)) install.packages(p)
+            }
+            stopifnot(packageVersion("roxygen2") == "8.0.0")'
+      - name: Regenerate the man pages and diff
+        run: |
+          Rscript -e 'roxygen2::roxygenise("addivortes-r", load_code = "source")'
+          paths="addivortes-r/man addivortes-r/NAMESPACE addivortes-r/DESCRIPTION"
+          git add -A --intent-to-add -- $paths
+          if ! git diff --exit-code -- $paths; then
+            echo "::error::addivortes-r/man is stale: the committed .Rd files do not match the roxygen blocks in addivortes-r/R/. Undocumented arguments are an R CMD check WARNING on a CRAN-facing package. Regenerate with 'just r-docs' and commit the diff above."
+            exit 1
+          fi
+
+  msrv:
+    # The pinned-MSRV leg is the MSRV gate: only rustc/cargo, no installed tools.
+    needs: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - run: cargo +1.85.1 test --locked
+
+  features:
+    # The rand-stack feature set is pinned by snapshot: any change to the unified
+    # feature graph (e.g. something silently enabling rand_distr/std_math) must
+    # show up as a reviewed diff to ci/feature-pins.txt. Coarse guard only; the
+    # authoritative check is the in-crate libm-path assertion in the test leg.
+    needs: fmt
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      # The sed strips absolute workspace paths (machine-specific) from the tree.
+      - run: cargo +1.85.1 tree -e features --locked | sed 's| (/[^)]*)||' | diff -u ci/feature-pins.txt -
+
+  deny:
+    # Sole per-commit supply-chain gate: advisories (incl. unmaintained + yanked),
+    # licence allow-list, and the six-direct-deps + allow-listed-closure ban.
+    needs: fmt
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-deny@0.19.9
+      - run: cargo deny check
+
+  movability:
+    # "Trivially movable" made verifiable: the crate files alone, copied
+    # outside the repo, must build and test green, catching any future
+    # workspace-inheritance or repo-relative-path leak.
+    needs: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - run: |
+          mkdir "$RUNNER_TEMP/crate"
+          cp -r Cargo.toml Cargo.lock clippy.toml rust-toolchain.toml README.md src tests examples .cargo "$RUNNER_TEMP/crate/"
+          cd "$RUNNER_TEMP/crate"
+          cargo +1.85.1 test --locked
+
+  public-api:
+    # The live API-surface gate: the public API is snapshotted in
+    # ci/public-api.txt; any surface change must be committed as a reviewed
+    # diff to that file. Merge-blocking during 0.x.
+    # The snapshot covers the whole surface: the extension points are
+    # unconditionally public, and --all-features
+    # brings in the feature-gated surface too. That matters for `config_spec`:
+    # it is the contract the language bindings are generated against, so a
+    # change to it is a change to every binding, and must be a reviewed diff.
+    needs: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          # rustdoc-JSON needs a nightly; pinned by date and bumped deliberately,
+          # like the golden vectors (≥ nightly-2025-08-02 per cargo-public-api 0.52.0).
+          toolchain: nightly-2026-06-01
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache-tool
+        with:
+          path: ~/.cargo/bin/cargo-public-api
+          key: cargo-public-api-0.52.0
+      - if: steps.cache-tool.outputs.cache-hit != 'true'
+        run: cargo +nightly-2026-06-01 install cargo-public-api --version 0.52.0 --locked
+      # cargo-public-api 0.52.0 has no --toolchain flag; RUSTUP_TOOLCHAIN selects
+      # the pinned nightly for the rustdoc-JSON build.
+      - run: |
+          cargo public-api --simplified --all-features > "$RUNNER_TEMP/public-api.txt"
+          diff -u ci/public-api.txt "$RUNNER_TEMP/public-api.txt"
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-06-01
+      # Doc gate: every public f64-returning function states its coordinate
+      # system, asserted from rustdoc JSON, never by eye.
+      # Shelf-parity gate: every shelf entry is either reachable from ConfigSpec
+      # (and so from every binding) or recorded as deliberately Rust-only. Both
+      # read the rustdoc JSON, so the reference is the compiler, not a list
+      # somebody has to remember to update.
+      - run: |
+          cargo rustdoc --lib --all-features -- -Zunstable-options --output-format json
+          python3 ci/check-doc-coords.py target/doc/addivortes.json
+          python3 ci/check-shelf-parity.py target/doc/addivortes.json
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-06-01
+
+  semver-checks:
+    # Release-semver gate. Dark until the first release tag exists; from the
+    # first v* tag onward it diffs against the latest tag as baseline.
+    needs: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - id: baseline
+        run: echo "tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
+      - if: steps.baseline.outputs.tag != ''
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: stable
+      - if: steps.baseline.outputs.tag != ''
+        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-semver-checks@0.48.0
+      - if: steps.baseline.outputs.tag != ''
+        run: cargo semver-checks --baseline-rev "${{ steps.baseline.outputs.tag }}"
+
+  package:
+    # Release readiness: the curated .crate must build and pass a
+    # publish dry run on every commit, so release day holds no surprises.
+    needs: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - run: cargo +1.85.1 publish --dry-run --locked
+
+  conclusion:
+    # Single required-status aggregator. Every job that can fail belongs here:
+    # a job missing from this list is a job that cannot block a merge.
+    needs:
+      [
+        fmt,
+        clippy,
+        test,
+        python,
+        r,
+        r-docs,
+        msrv,
+        features,
+        deny,
+        movability,
+        public-api,
+        semver-checks,
+        package,
+      ]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All gates green
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "$results"
+          for r in $results; do
+            [ "$r" = "success" ] || [ "$r" = "skipped" ] || exit 1
+          done

@@ -1,0 +1,83 @@
+[package]
+name = "addivortes"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Bayesian additive Voronoi tessellation regression (AddiVortes, Stone & Gosling 2025) with bit-reproducible MCMC"
+repository = "https://github.com/l-thomson/addivortes"
+documentation = "https://docs.rs/addivortes"
+readme = "README.md"
+keywords = ["bayesian", "mcmc", "regression", "voronoi", "machine-learning"]
+categories = ["science", "mathematics", "algorithms"]
+# The packaged crate is the curated subset: source, licences, attribution and
+# user docs only. CI files and the rest of the repository apparatus are not
+# part of the .crate.
+include = [
+    "src/**",
+    "Cargo.toml",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+    "NOTICE",
+    "README.md",
+    "examples/**",
+    "clippy.toml",
+]
+
+[features]
+# Save/load of fitted models: Serialize/Deserialize on the value types
+# (Tessellation, FittedScaler, PosteriorSamples, Metric, Warning) and on
+# FittedAddiVortes itself for models built from shelf components only.
+# Deserialisation validates: a corrupt or hand-edited payload is rejected,
+# never a panic. Models carrying custom extension points refuse to serialise
+# (save their parts instead).
+serde = ["dep:serde"]
+
+[dependencies]
+libm = "0.2"
+serde = { version = "1.0.166", features = ["derive"], optional = true }
+rand = { version = "0.10", default-features = false }
+rand_chacha = "0.10"
+rand_core = "0.10"
+rand_distr = "0.6"
+thiserror = "2"
+
+[dev-dependencies]
+# Disabling default features matters here: proptest's default `std` feature enables
+# `num-traits/std`, which would shadow libm inside num-traits for the whole
+# unified test build and make test chains differ from shipped chains (the reproducibility contract;
+# caught by tests/determinism.rs when proptest was first added). Its `no_std`
+# feature enables `num-traits/libm`, the crate's pinned path, at the cost of
+# proptest's failure-persistence files (std-only), which we forgo.
+# 1.6 is the first release with the `no_std` feature (the weekly
+# minimal-versions job proves the declared lower bounds actually resolve).
+proptest = { version = "1.6", default-features = false, features = ["no_std", "alloc"] }
+# float_roundtrip is required: without it serde_json's float parser can be
+# one ULP off, which breaks the bit-identical save/load round-trip tests.
+# 1.0.54 is the first release with the feature.
+serde_json = { version = "1.0.100", features = ["float_roundtrip"] }
+sha2 = "0.11.0"
+
+# Determinism (the reproducibility contract): pin the codegen knobs that can otherwise vary build-to-build.
+# `codegen-units = 1` compiles the crate as a single unit instead of parallel chunks
+# (slower to build, but removes a source of non-reproducibility); `lto` is pinned to a
+# fixed value so optimisation behaves identically every build.
+[profile.release]
+codegen-units = 1
+lto = "fat"
+
+# The test profile inherits these from `dev` already; we state them explicitly so the
+# determinism / golden / statistical suites can never silently lose overflow and
+# debug-assertion checking if a default ever changes.
+[profile.test]
+debug-assertions = true
+overflow-checks = true
+
+# The golden-chain and statistical suites run optimised (they sample real chains) but
+# must keep assertions and overflow checks live: release wraps integer overflow
+# silently, and an index overflow there would yield a wrong-but-finite result that no
+# other gate catches (the reproducibility contract). Select with `cargo nextest run --cargo-profile determinism`.
+[profile.determinism]
+inherits = "release"
+debug-assertions = true
+overflow-checks = true

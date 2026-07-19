@@ -1,0 +1,27 @@
+# The Python binding crate: a PyO3/maturin native module wrapping the
+# addivortes public API: config-level selection of the built-in shelf
+# (metrics, distances, response families), fit/predict/intervals, save/load,
+# diagnostics. The trait-based extension points deliberately do not cross the
+# FFI boundary (researcher components are a Rust-side activity); what Python
+# selects is the shelf.
+#
+# Never part of the addivortes package (the root crate's curated `include`
+# list excludes this directory).
+[package]
+name = "addivortes-py"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Python bindings for the addivortes crate (Bayesian additive Voronoi tessellations)"
+publish = false
+
+[lib]
+name = "addivortes_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+addivortes = { version = "0.1.0", path = "..", features = ["serde"] }
+numpy = "0.29.0"
+pyo3 = { version = "0.29.0", features = ["abi3-py39", "extension-module"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }

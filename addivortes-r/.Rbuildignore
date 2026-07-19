@@ -1,0 +1,6 @@
+^src/rust/target$
+^src/rust/\.cargo$
+^src/\.cargo$
+^\.cargo$
+^tools$
+^LICENSE\.md$

@@ -1,0 +1,22 @@
+# The rextendr build recipe: cargo produces the staticlib, R's SHLIB rule
+# links it with entrypoint.o. On CRAN (NOT_CRAN unset) cargo must run
+# offline against vendored sources with a package-local CARGO_HOME; that
+# flip happens at publication; the dev build below uses
+# the normal cargo cache and the path dependency on the repo's crate.
+TARGET_DIR = ./rust/target
+LIBDIR = $(TARGET_DIR)/release
+STATLIB = $(LIBDIR)/libaddivortesr.a
+PKG_LIBS = -L$(LIBDIR) -laddivortesr
+
+all: $(SHLIB)
+
+$(SHLIB): $(STATLIB)
+
+$(STATLIB):
+	export PATH="$(PATH):$(HOME)/.cargo/bin" && \
+	  cargo build --lib --release --locked --manifest-path=./rust/Cargo.toml --target-dir $(TARGET_DIR)
+
+clean:
+	rm -Rf $(SHLIB) $(STATLIB) $(OBJECTS) $(TARGET_DIR)
+
+.PHONY: all clean $(STATLIB)

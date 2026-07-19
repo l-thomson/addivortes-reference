@@ -1,0 +1,237 @@
+# The release run of the validation ladder's upper rungs (see src/calibration.rs
+# for the ladder; CONTRIBUTING.md documents every rung and how to run it).
+#
+# Manually triggered (`workflow_dispatch`) before a chain-altering 0.y minor
+# bump and as a gate on the 1.0 trait freeze; never scheduled. Four legs:
+#
+#   calibration-full      the comprehensive SBC + Geweke sweep at full N, run
+#                         unconditionally (every config, no path filter): the
+#                         backstop the calibration gate's path filter cannot be;
+#   interval-coverage     Friedman n=150 p=10 coverage at the paper defaults,
+#                         formal score test of H0: coverage = 0.90 (capped
+#                         ~0.95). Interval coverage, not code coverage;
+#   reference-comparison  RMSE comparison against the pinned R reference (not
+#                         an oracle): |delta| <= 0.05 at the default
+#                         configuration;
+#   mutants               full scoped cargo-mutants gate on the move/accept
+#                         code, sharded, kill-rate floor >= 90%, INVALID above
+#                         5% timeouts.
+#
+# Every leg's result is a required item on the release checklist; the
+# calibration-full leg is non-negotiable: no skipping for a "docs-only" release.
+
+name: release-gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_reference_comparison:
+        description: "Skip the R reference comparison (slow: fits the pinned R reference package)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  STAT_GATES_DIR: ${{ github.workspace }}/target/stat-gates
+
+jobs:
+  calibration-full:
+    # The calibration gate battery at release N (env overrides; same tests, same
+    # verdict pipeline, ~10x the samples). Unconditional by construction:
+    # workflow_dispatch has no path filter.
+    runs-on: ubuntu-24.04
+    env:
+      SBC_REPLICATIONS: "1000"
+      SBC_DRAWS: "249"
+      SBC_THIN: "10"
+      SBC_BURN_IN: "500"
+      GEWEKE_MC: "20000"
+      GEWEKE_SC: "5000"
+      GEWEKE_THIN: "20"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-nextest@0.9.138
+      # Same selector discipline as the calibration gate: one nextest run per
+      # selector with `--no-tests fail`, never a union, so a stale clause goes
+      # red instead of being quietly dropped. The loop records failures rather
+      # than aborting, so a Geweke failure still lets the SBC ranks be emitted
+      # and get their R verdict.
+      - name: Full-N Geweke + pure-prior + SBC rank emission
+        run: |
+          set -uo pipefail
+          status=0
+          for selector in \
+            'test(/^stat_gates::(sbc_ranks|geweke|pure_prior)/)' \
+            'test(/^stat_gates::battery_public_driver/)' \
+            'test(/^extensions::inclusion::dart::tests::isolated_update/)' \
+            'binary(calibration_acceptance)'
+          do
+            echo "::group::${selector}"
+            if ! cargo +1.85.1 nextest run --locked --cargo-profile determinism \
+              --run-ignored ignored-only --no-fail-fast --no-tests fail \
+              -E "${selector}"
+            then
+              echo "::error::release battery selector failed or matched no tests: ${selector}"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "${status}"
+      - name: Provision pinned R environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends r-base-core
+          R --version | head -1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/R/library
+          key: r-library-bayesplot-1.15.0-ppm-2026-07-01-${{ runner.os }}
+      - name: Install pinned bayesplot (date-pinned Posit snapshot)
+        run: |
+          mkdir -p ~/R/library
+          Rscript -e '
+            .libPaths("~/R/library")
+            if (!requireNamespace("bayesplot", quietly = TRUE)) {
+              options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(),
+                paste(getRversion(), R.version[["platform"]], R.version[["arch"]], R.version[["os"]])),
+                repos = c(PPM = "https://packagemanager.posit.co/cran/__linux__/noble/2026-07-01"))
+              install.packages("bayesplot")
+            }
+            stopifnot(packageVersion("bayesplot") == "1.15.0")'
+      - name: SBC ECDF-band verdict (full N)
+        run: |
+          R_LIBS_USER=~/R/library Rscript ci/sbc-ecdf-check.R \
+            --summary sbc-summary.md \
+            --expect-fail "$STAT_GATES_DIR/sbc-injection-rd.csv" \
+            "$STAT_GATES_DIR/sbc-small-p.csv" \
+            "$STAT_GATES_DIR/sbc-spherical.csv" \
+            "$STAT_GATES_DIR/sbc-weighted-inclusion.csv" \
+            "$STAT_GATES_DIR/sbc-h-variance.csv" \
+            "$STAT_GATES_DIR/sbc-soft-membership.csv" \
+            "$STAT_GATES_DIR/sbc-dart.csv"
+          cat sbc-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: release-calibration-ranks
+          path: target/stat-gates/
+
+  interval-coverage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-nextest@0.9.138
+      - name: Friedman coverage score test (paper defaults, fixed seed set)
+        run: |
+          cargo +1.85.1 nextest run --locked --cargo-profile determinism \
+            --run-ignored ignored-only --no-capture \
+            -E 'test(/^stat_gates::interval_coverage_friedman$/)' \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+  reference-comparison:
+    # NOT an oracle: validates that the shipped default stays in the
+    # statistical neighbourhood of the original authors' R package,
+    # checked out from their repository at a pinned commit.
+    if: ${{ !inputs.skip_reference_comparison }}
+    runs-on: ubuntu-24.04
+    env:
+      # AddiVortes 0.6.0, the commit validated locally on 2026-07-02
+      # (ci/reference-compare.R also guards the package version at runtime).
+      # The version alone does not pin the code: 0.6.0 ran from March to
+      # June upstream and R/ and src/ changed within it. Re-pin only
+      # alongside a re-measured EXPECTED_DELTA in ci/reference-compare.R.
+      # Full SHA: actions/checkout cannot resolve a short one (it fetches
+      # ref globs, matches nothing, and fails after three retries).
+      REF_COMMIT: 827b76572dc9d282f87f0f990bb5cb2c11f52020
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: johnpaulgosling/AddiVortes
+          ref: ${{ env.REF_COMMIT }}
+          path: reference
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-nextest@0.9.138
+      - name: Emit fixture + rust RMSE
+        run: |
+          cargo +1.85.1 nextest run --locked --cargo-profile determinism \
+            --run-ignored ignored-only --no-capture \
+            -E 'test(/^stat_gates::reference_comparison_emit_fixture_and_rmse$/)'
+      - name: Provision R + pinned reference package
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends r-base-core r-base-dev
+          mkdir -p ~/R/library
+          Rscript -e '
+            .libPaths("~/R/library")
+            options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(),
+              paste(getRversion(), R.version[["platform"]], R.version[["arch"]], R.version[["os"]])),
+              repos = c(PPM = "https://packagemanager.posit.co/cran/__linux__/noble/2026-07-01"))
+            install.packages("pbapply")'
+          R_LIBS_USER=~/R/library R CMD INSTALL reference
+      - name: Reference comparison (|delta RMSE| <= 0.05)
+        run: |
+          R_LIBS_USER=~/R/library Rscript ci/reference-compare.R 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
+  mutants:
+    # Full scoped mutation gate on the move/accept code.
+    # Sharded; the baseline build is skipped per shard (each shard still
+    # builds once; `--baseline skip` avoids re-running the clean test suite
+    # per shard; the baseline is verified green once, on shard 0).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.85.1
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest@0.9.138
+      - name: Verify the baseline is green once (shard 0 only)
+        if: matrix.shard == 0
+        run: cargo +1.85.1 nextest run --locked
+      - name: Mutate the move/accept surface (shard ${{ matrix.shard }}/4)
+        run: |
+          cargo +1.85.1 mutants --test-tool nextest --baseline skip \
+            --shard ${{ matrix.shard }}/4 --timeout 300 \
+            -f 'src/extensions/moves/**/*.rs' -f 'src/extensions/moves.rs' \
+            -f 'src/engine/sampler.rs' || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: mutants.out/outcomes.json
+
+  mutants-verdict:
+    needs: mutants
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: mutants-shard-*
+          path: shards
+      - name: Aggregate kill-rate (floor 90%, INVALID above 5% timeouts)
+        run: |
+          python3 ci/check-mutants.py shards/mutants-shard-*/outcomes.json \
+            2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
