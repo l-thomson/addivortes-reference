@@ -1,0 +1,7 @@
+# Normalise text files to LF on every platform.
+* text=auto eol=lf
+
+# Golden vectors are compared byte for byte across compilation targets.
+# Never let a platform checkout (e.g. core.autocrlf=true on Windows)
+# rewrite their line endings. Keep this rule last so it wins.
+tests/golden/** -text
