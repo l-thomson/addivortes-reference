@@ -4,11 +4,12 @@
 # (calibration.yml) or manually triggered (release-gate.yml).
 #
 # Cadence: WEEKLY, not nightly. These jobs exist to
-# catch runner-image/toolchain/dependency drift, and GitHub refreshes its
-# hosted runner images on a weekly cadence (actions/runner-images: "images
-# are updated on a weekly basis", multi-day rollout): a nightly run of an
-# unchanged codebase against an unchanged image buys nothing and bills the
-# macOS golden matrix ~10x for it. Monday 03:17 UTC trails the typical
+# catch runner-image/toolchain/dependency drift on an UNCHANGED codebase —
+# code-change-driven regressions are ci.yml's job, which runs the same
+# golden matrix on every PR. GitHub refreshes its hosted runner images on a
+# weekly cadence (actions/runner-images: "images are updated on a weekly
+# basis", multi-day rollout), so a nightly re-run of unchanged code against
+# an unchanged image buys nothing. Monday 03:17 UTC trails the typical
 # image-rollout window.
 
 name: scheduled
@@ -61,9 +62,10 @@ jobs:
 
   golden:
     # Per-target golden chain + predict vectors: bit-exact within a
-    # compilation target, validated on the full OS matrix weekly (macOS bills
-    # ~10×; golden drift comes from runner-image/toolchain bumps, not PR code,
-    # and images refresh weekly). Runs under the
+    # compilation target. ci.yml runs this same matrix on every PR to catch
+    # code-driven drift; this weekly leg re-validates the unchanged vectors
+    # against fresh runner images and toolchains (which refresh weekly).
+    # Runs under the
     # determinism profile (optimised + debug-assertions + overflow-checks).
     # Targets without a checked-in vector skip with guidance.
     strategy:

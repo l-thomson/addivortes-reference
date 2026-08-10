@@ -133,8 +133,10 @@ target. Two rules protect that, and both are enforced mechanically:
 
 ## Platform note
 
-The strict reproducibility, performance, and supply-chain gates run on Linux x86_64.
-Developing on macOS or Windows is fine, but those gates are authoritative on Linux.
+The performance and supply-chain gates run on Linux x86_64 and are authoritative
+there. The reproducibility (golden) gate runs on the full target matrix — Linux
+x86_64, macOS ARM, Windows — on every PR, and weekly against fresh runner images
+(`scheduled.yml`). Developing on macOS or Windows is fine.
 
 ## Golden-vector capture runbook (per-target)
 
