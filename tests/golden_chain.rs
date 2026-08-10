@@ -66,12 +66,34 @@ fn check_or_write(kind: &str, rendered: String) {
         );
         return;
     };
+    // A checkout that rewrote line endings (e.g. core.autocrlf=true, the Git
+    // for Windows default) is the only legitimate way these files change on
+    // disk; .gitattributes prevents that in CI, and this is the belt to those
+    // braces. Vector content is ASCII hex and labels, so a CR is never
+    // legitimate content.
+    let expected = expected.replace("\r\n", "\n");
     if expected != rendered {
         let summary = |s: &str| s.lines().last().unwrap_or("").to_string();
+        let first_diff = rendered
+            .lines()
+            .zip(expected.lines())
+            .position(|(r, e)| r != e)
+            .unwrap_or_else(|| rendered.lines().count().min(expected.lines().count()));
+        if summary(&rendered) == summary(&expected) {
+            panic!(
+                "golden[{kind}] mismatch on {}: the sha256 summary lines agree ({}), \
+                 so this is not sampler drift: the difference is in raw bytes (line \
+                 endings/encoding, or a vector edited without updating its digest), \
+                 first differing line index {first_diff}. Check the checkout, not \
+                 the sampler.",
+                target_tag(),
+                summary(&rendered),
+            );
+        }
         panic!(
-            "golden[{kind}] drift on {}: {} != {}: a chain-altering change. If \
-             deliberate, regenerate every target's vector in one PR and bump the 0.y \
-             minor.",
+            "golden[{kind}] drift on {}: {} != {} (first differing line index \
+             {first_diff}): a chain-altering change. If deliberate, regenerate every \
+             target's vector in one PR and bump the 0.y minor.",
             target_tag(),
             summary(&rendered),
             summary(&expected),
