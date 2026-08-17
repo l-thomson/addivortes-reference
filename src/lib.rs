@@ -153,6 +153,8 @@ pub mod config_spec;
 // The extension points: the ten swappable surfaces. Private module; each point
 // is re-exported at the crate root below so import paths stay short.
 mod extensions;
+// OSS-1 spike: the model-files surface, crate-private (no public-API change).
+mod models;
 
 pub use engine::mathsfn;
 
