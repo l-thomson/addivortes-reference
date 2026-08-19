@@ -64,7 +64,7 @@ fn main() -> addivortes::Result<()> {
     let observations: Vec<f64> = covariate.iter().map(|&v| 0.3 * v - 0.1).collect();
     let weights = vec![1.0; n];
     let sigma_sq = 0.2;
-    let model = LinearGaussianModel::new(sigma_beta_sq, q);
+    let model = LinearGaussianModel::new(sigma_beta_sq, q)?;
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
     let results = conformance::check_basis_cell_model(
         &model,
@@ -103,7 +103,7 @@ fn main() -> addivortes::Result<()> {
     };
     let constant_cells = common().fit(&x, &y)?;
     let linear_cells = common()
-        .with_cell_model(LinearGaussianModel::new(sigma_beta_sq, q))
+        .with_cell_model(LinearGaussianModel::new(sigma_beta_sq, q)?)
         .with_cell_basis(LinearBasis::new(basis_columns))
         .fit(&x, &y)?;
 

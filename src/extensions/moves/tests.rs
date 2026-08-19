@@ -879,7 +879,7 @@ fn coordinate_densities_integrate_to_one() {
         }
         sum * h
     };
-    let normal = EuclideanNormal::new(0.8);
+    let normal = EuclideanNormal::new(0.8).unwrap();
     let mass = numeric_integral(
         &|x| crate::engine::mathsfn::exp(normal.log_density(x)),
         -8.0,
@@ -888,7 +888,7 @@ fn coordinate_densities_integrate_to_one() {
     );
     assert_abs_eq(mass, 1.0, 1e-8);
 
-    let wrapped = WrappedNormal::new(0.8);
+    let wrapped = WrappedNormal::new(0.8).unwrap();
     let pi = std::f64::consts::PI;
     let mass = numeric_integral(
         &|x| crate::engine::mathsfn::exp(wrapped.log_density(x)),

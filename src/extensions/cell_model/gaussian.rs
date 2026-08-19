@@ -4,6 +4,7 @@
 //! Gibbs draw (`scale::GlobalSigma`) it is exactly the paper's published
 //! sampler, and the fit-time default.
 
+use crate::engine::error::{Result, require_positive_finite};
 use crate::extensions::cell_model::{CellModel, CellStats, gaussian_marginal_terms, mu_posterior};
 
 /// The built-in Gaussian sufficient statistic under **hard** assignment:
@@ -67,10 +68,13 @@ pub struct GaussianCellModel {
 
 impl GaussianCellModel {
     /// A Gaussian cell model with prior cell-value variance σ_μ²
-    /// (**scaled space**; σ_μ = 0.5/(k√m), the paper's μ prior).
-    pub fn new(sigma_mu_sq: f64) -> Self {
-        debug_assert!(sigma_mu_sq > 0.0);
-        Self { sigma_mu_sq }
+    /// (**scaled space**; σ_μ = 0.5/(k√m), the paper's μ prior). Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless `sigma_mu_sq` is finite and strictly positive.
+    pub fn new(sigma_mu_sq: f64) -> Result<Self> {
+        Ok(Self {
+            sigma_mu_sq: require_positive_finite("sigma_mu_sq", sigma_mu_sq)?,
+        })
     }
 }
 

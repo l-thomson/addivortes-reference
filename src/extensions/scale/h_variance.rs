@@ -13,7 +13,9 @@
 //! [`ScaleCtx`] each sweep; nothing is re-implemented here.
 
 use crate::engine::backfit::{Composition, EnsembleUnit};
-use crate::engine::error::{AddiVortesError, Result};
+use crate::engine::error::{
+    AddiVortesError, Result, require_at_least_one, require_positive_finite,
+};
 use crate::engine::mathsfn;
 use crate::engine::tessellation::Tessellation;
 use crate::extensions::cell_model::{CellModel, InvChiSqCellModel};
@@ -31,14 +33,23 @@ use crate::extensions::scale::{ScaleCtx, ScaleModel};
 /// ```
 ///
 /// Returns `(ν′, λ′)`: dimensionless prior parameters, λ′ in scaled space
-/// (λ's own coordinate system). Requires ν > 2 (the homoscedastic prior mean
-/// must exist).
-pub fn h_variance_prior(nu: f64, lambda: f64, m_prime: usize) -> (f64, f64) {
-    debug_assert!(nu > 2.0 && lambda > 0.0 && m_prime >= 1);
+/// (λ's own coordinate system). Fails with
+/// [`AddiVortesError::InvalidHyperparameter`] unless ν > 2 (the
+/// homoscedastic prior mean must exist), λ is finite and strictly positive,
+/// and m′ ≥ 1.
+pub fn h_variance_prior(nu: f64, lambda: f64, m_prime: usize) -> Result<(f64, f64)> {
+    if !(nu.is_finite() && nu > 2.0) {
+        return Err(AddiVortesError::InvalidHyperparameter {
+            name: "nu".into(),
+            reason: format!("the H §3.3 calibration needs ν > 2 (finite prior mean), got {nu}"),
+        });
+    }
+    let lambda = require_positive_finite("lambda", lambda)?;
+    let m_prime = require_at_least_one("m_prime", m_prime)?;
     let inv_m = 1.0 / m_prime as f64;
     let lambda_prime = mathsfn::powf(lambda, inv_m);
     let nu_prime = 2.0 / (1.0 - mathsfn::powf(1.0 - 2.0 / nu, inv_m));
-    (nu_prime, lambda_prime)
+    Ok((nu_prime, lambda_prime))
 }
 
 /// The variance ensemble's lazily-initialised sampling state (the design is
@@ -65,7 +76,7 @@ struct HState {
 /// [`WeightedGaussianModel`](crate::extensions::cell_model::WeightedGaussianModel)
 /// — the hard-assignment Gaussian statistic rejects the non-unit weights these
 /// precisions produce, on purpose. **The engine pairs it for you**, exactly as it
-/// does for a `RobustT` response: `with_scale_model(HVariance::new(m))` is
+/// does for a `RobustT` response: `with_scale_model(HVariance::new(m)?)` is
 /// enough. Setting your own `with_cell_model` overrides that, as everywhere.
 ///
 /// By default (ν′, λ′) are resolved at the first sweep from the engine's own
@@ -92,25 +103,28 @@ pub struct HVariance {
 impl HVariance {
     /// A variance ensemble of `m_prime` tessellations (H paper default 40),
     /// (ν′, λ′) calibrated from the engine's homoscedastic prior at the first
-    /// sweep (§3.3).
-    pub fn new(m_prime: usize) -> Self {
-        debug_assert!(m_prime >= 1);
-        Self {
-            m_prime,
+    /// sweep (§3.3). Fails with [`AddiVortesError::InvalidHyperparameter`]
+    /// unless `m_prime ≥ 1`.
+    pub fn new(m_prime: usize) -> Result<Self> {
+        Ok(Self {
+            m_prime: require_at_least_one("m_prime", m_prime)?,
             prior: None,
             kernel: None,
             state: None,
-        }
+        })
     }
 
     /// Pin (ν′, λ′) explicitly instead of calibrating from the context
     /// (scaled space for λ′; the statistical gates pin so the generating
-    /// and fitted priors coincide).
-    #[must_use]
-    pub fn with_prior(mut self, nu_prime: f64, lambda_prime: f64) -> Self {
-        debug_assert!(nu_prime > 0.0 && lambda_prime > 0.0);
-        self.prior = Some((nu_prime, lambda_prime));
-        self
+    /// and fitted priors coincide). Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`] unless both are finite
+    /// and strictly positive.
+    pub fn with_prior(mut self, nu_prime: f64, lambda_prime: f64) -> Result<Self> {
+        self.prior = Some((
+            require_positive_finite("nu_prime", nu_prime)?,
+            require_positive_finite("lambda_prime", lambda_prime)?,
+        ));
+        Ok(self)
     }
 
     /// Replace the variance-cell family (the cell-model point: the cells are an
@@ -160,7 +174,12 @@ impl HVariance {
                             .into(),
                     });
                 }
-                h_variance_prior(ctx.nu(), ctx.calibrated_lambda(), self.m_prime)
+                // A zero-residual response calibrates λ to exactly 0, which
+                // would pin every variance cell at 0 (λ′ = 0).
+                if ctx.calibrated_lambda() <= 0.0 {
+                    return Err(AddiVortesError::DegenerateResidual {});
+                }
+                h_variance_prior(ctx.nu(), ctx.calibrated_lambda(), self.m_prime)?
             }
         };
         let init = Tessellation {
@@ -172,7 +191,7 @@ impl HVariance {
         let assignments = vec![AssignmentCache::new(vec![0usize; n], Vec::new()); self.m_prime];
         let kernel = match &self.kernel {
             Some(factory) => factory.kernel(),
-            None => Box::new(KernelOf(InvChiSqCellModel::new(prior.0, prior.1)))
+            None => Box::new(KernelOf(InvChiSqCellModel::new(prior.0, prior.1)?))
                 as Box<dyn crate::extensions::erasure::ErasedCellKernel>,
         };
         self.state = Some(HState {
@@ -219,7 +238,7 @@ impl HVariance {
         let precisions: Vec<f64> = fit.iter().map(|s_sq| 1.0 / s_sq).collect();
         let kernel = match &self.kernel {
             Some(factory) => factory.kernel(),
-            None => Box::new(KernelOf(InvChiSqCellModel::new(prior.0, prior.1)))
+            None => Box::new(KernelOf(InvChiSqCellModel::new(prior.0, prior.1)?))
                 as Box<dyn crate::extensions::erasure::ErasedCellKernel>,
         };
         self.state = Some(HState {
@@ -359,16 +378,66 @@ mod tests {
             .with_omega(1.0)
             .with_burn_in(2)
             .with_draws(2)
-            .with_scale_model(HVariance::new(5))
+            .with_scale_model(HVariance::new(5).unwrap())
             .fit(&x, &y)
             .expect("a heteroscedastic scale model fits on its own");
+    }
+
+    /// A response with no residual variation (an exact linear function of
+    /// the features) calibrates λ to exactly 0, which the §3.3 matching would
+    /// carry into λ′ = 0: every variance cell pinned at zero. The fit must
+    /// refuse at the boundary rather than run that chain.
+    #[test]
+    fn zero_residual_data_is_a_degenerate_residual_error() {
+        let n = 50;
+        let xs: Vec<f64> = (0..n).map(|i| i as f64 / (n - 1) as f64).collect();
+        let ys: Vec<f64> = xs.iter().map(|&v| 2.0 * v).collect();
+        let x = Data::new(xs, n, 1).unwrap();
+        let err = AddiVortesConfig::new(7)
+            .with_m(5)
+            .with_omega(0.5)
+            .with_burn_in(5)
+            .with_draws(5)
+            .with_scale_model(HVariance::new(10).unwrap())
+            .fit(&x, &ys)
+            .unwrap_err();
+        assert_eq!(err, AddiVortesError::DegenerateResidual {});
+    }
+
+    /// The constructor arguments are checked in every build profile.
+    #[test]
+    fn constructors_reject_out_of_domain_arguments() {
+        assert!(matches!(
+            HVariance::new(0),
+            Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "m_prime"
+        ));
+        assert!(matches!(
+            HVariance::new(3).unwrap().with_prior(0.0, 0.5),
+            Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "nu_prime"
+        ));
+        assert!(matches!(
+            HVariance::new(3).unwrap().with_prior(4.0, f64::NAN),
+            Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "lambda_prime"
+        ));
+        assert!(matches!(
+            h_variance_prior(2.0, 0.02, 4),
+            Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "nu"
+        ));
+        assert!(matches!(
+            h_variance_prior(6.0, 0.0, 4),
+            Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "lambda"
+        ));
+        assert!(matches!(
+            h_variance_prior(6.0, 0.02, 0),
+            Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "m_prime"
+        ));
     }
 
     /// The claim the engine reads at assembly. `precisions()` cannot answer it:
     /// it is `None` until the first `update` builds the ensemble.
     #[test]
     fn h_variance_declares_itself_heteroscedastic_before_any_update() {
-        let model = HVariance::new(5);
+        let model = HVariance::new(5).unwrap();
         assert!(
             model.precisions().is_none(),
             "no state before the first update"
@@ -388,7 +457,7 @@ mod tests {
     /// (ν′/(ν′−2))^m′ = ν/(ν−2).
     #[test]
     fn h_prior_calibration_matches_the_paper_matching() {
-        let (nu_prime, lambda_prime) = h_variance_prior(6.0, 0.02, 40);
+        let (nu_prime, lambda_prime) = h_variance_prior(6.0, 0.02, 40).unwrap();
         assert_rel_eq(lambda_prime, 0.906_829_730_118_553_8, 1e-12);
         assert_rel_eq(nu_prime, 198.305_966_425_172_73, 1e-10);
         assert_rel_eq(mathsfn::powf(lambda_prime, 40.0), 0.02, 1e-12);
@@ -398,7 +467,7 @@ mod tests {
             1e-10,
         );
         // m′ = 1 must be the identity.
-        let (nu_prime, lambda_prime) = h_variance_prior(6.0, 0.02, 1);
+        let (nu_prime, lambda_prime) = h_variance_prior(6.0, 0.02, 1).unwrap();
         assert_rel_eq(nu_prime, 6.0, 1e-12);
         assert_rel_eq(lambda_prime, 0.02, 1e-12);
     }
@@ -422,7 +491,7 @@ mod tests {
         ]);
         let coord_dists: Vec<std::sync::Arc<dyn crate::extensions::coord::CoordinateDistribution>> =
             vec![std::sync::Arc::new(
-                crate::extensions::coord::EuclideanNormal::new(0.8),
+                crate::extensions::coord::EuclideanNormal::new(0.8).unwrap(),
             )];
         let weights = [1.0_f64];
         let ctx = ScaleCtx {
@@ -440,7 +509,7 @@ mod tests {
             weights_enc: &weights,
             response_weights: None,
         };
-        let mut model = HVariance::new(4).with_prior(8.0, 0.3);
+        let mut model = HVariance::new(4).unwrap().with_prior(8.0, 0.3).unwrap();
         let mut rng = ChaCha8Rng::from_seed([21; 32]);
         for _ in 0..25 {
             ScaleModel::update(&mut model, &ctx, &mut rng).unwrap();

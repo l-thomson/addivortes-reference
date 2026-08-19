@@ -13,6 +13,7 @@
 //! scalar Gaussian family to ≤ 1e-12 on marginal terms and draws
 //! (pinned by this module's tests).
 
+use crate::engine::error::{Result, require_at_least_one, require_positive_finite};
 use crate::engine::mathsfn;
 use crate::extensions::cell_model::{CellModel, CellStats};
 
@@ -122,10 +123,14 @@ pub struct LinearGaussianModel {
 impl LinearGaussianModel {
     /// A linear cell model with coefficient-prior variance σ_β² (scaled
     /// space) over a q-dimensional basis. `q = 1` with the intercept basis
-    /// is the scalar Gaussian family.
-    pub fn new(sigma_beta_sq: f64, q: usize) -> Self {
-        debug_assert!(sigma_beta_sq > 0.0 && q >= 1);
-        Self { sigma_beta_sq, q }
+    /// is the scalar Gaussian family. Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless `sigma_beta_sq` is finite and strictly positive and `q ≥ 1`.
+    pub fn new(sigma_beta_sq: f64, q: usize) -> Result<Self> {
+        Ok(Self {
+            sigma_beta_sq: require_positive_finite("sigma_beta_sq", sigma_beta_sq)?,
+            q: require_at_least_one("q", q)?,
+        })
     }
 
     /// The basis dimension q (a count).
@@ -281,7 +286,7 @@ mod tests {
         let weights = [1.0, 0.5, 2.0, 1.5, 1.0];
         let assignment = [0usize, 1, 0, 1, 0];
 
-        let linear = LinearGaussianModel::new(sigma_mu_sq, 1);
+        let linear = LinearGaussianModel::new(sigma_mu_sq, 1).unwrap();
         let mut stats = vec![LinearCellStats::default(); 2];
         let mut pairs = [(0.0_f64, 0.0_f64); 2];
         for i in 0..residuals.len() {
@@ -304,8 +309,8 @@ mod tests {
         let residuals = [0.12, -0.05, 0.31, 0.07, -0.22];
         let assignment = [0usize, 1, 0, 1, 0];
 
-        let linear = LinearGaussianModel::new(sigma_mu_sq, 1);
-        let scalar = GaussianCellModel::new(sigma_mu_sq);
+        let linear = LinearGaussianModel::new(sigma_mu_sq, 1).unwrap();
+        let scalar = GaussianCellModel::new(sigma_mu_sq).unwrap();
         let mut linear_stats = vec![LinearCellStats::default(); 2];
         let mut scalar_stats = vec![crate::extensions::cell_model::GaussianCellStats::default(); 2];
         for i in 0..residuals.len() {
@@ -330,7 +335,7 @@ mod tests {
     /// 0.5(bᵀA⁻¹b − ln det(σ_β²A))).
     #[test]
     fn q2_marginal_matches_reference_fixture() {
-        let model = LinearGaussianModel::new(0.05, 2);
+        let model = LinearGaussianModel::new(0.05, 2).unwrap();
         let z = [[1.0, 0.2], [1.0, -0.4], [1.0, 0.1], [1.0, 0.5]];
         let w = [1.0, 0.5, 2.0, 1.5];
         let r = [0.12, -0.05, 0.31, 0.07];
@@ -354,7 +359,7 @@ mod tests {
     /// conjugacy means at zero data (checked on the sample moments).
     #[test]
     fn empty_statistic_draws_the_coefficient_prior() {
-        let model = LinearGaussianModel::new(0.05, 2);
+        let model = LinearGaussianModel::new(0.05, 2).unwrap();
         let stats = vec![LinearCellStats::default()];
         let mut rng = ChaCha8Rng::from_seed([7; 32]);
         let n_draws = 100_000;

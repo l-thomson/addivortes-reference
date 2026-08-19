@@ -223,7 +223,13 @@ impl Sampler {
         // Scaling + encoding; everything below is in scaled space.
         let (scaler, x_enc, y_scaled) = FittedScaler::fit(x, y, &metrics)?;
 
-        // One-time prior calibration.
+        // One-time prior calibration. A response that is an exact linear
+        // function of the features has σ̂ = 0 and so λ = 0; the global σ²
+        // draw stays well-defined under that prior (σ² = RSS/χ²), so the fit
+        // proceeds. A scale model that cannot accept λ = 0 (the H variance
+        // calibration, whose λ′ = λ^(1/m′) would pin every cell at 0)
+        // refuses with `DegenerateResidual` when it reads
+        // `ScaleCtx::calibrated_lambda`.
         let sigma_hat = scaler::sigma_hat(&x_enc, &y_scaled);
         let lambda = scaler::calibrate_lambda(config.nu, config.q, sigma_hat);
 
@@ -282,7 +288,7 @@ impl Sampler {
                 .metrics()
                 .iter()
                 .map(|metric| semantics_for(metric).default_coord_law(config.sigma_c))
-                .collect(),
+                .collect::<Result<_>>()?,
         };
 
         // Inclusion model: the config's, or the point's default over
@@ -365,7 +371,7 @@ impl Sampler {
         // A heteroscedastic scale model needs the same pairing for the
         // same reason: its per-observation precisions make the accumulation
         // weights fractional, which the hard-assignment `GaussianCellStats`
-        // refuses. Without this arm, `with_scale_model(HVariance::new(m))` on
+        // refuses. Without this arm, `with_scale_model(HVariance::new(m)?)` on
         // its own panicked partway through the first sweep — the crate's own H
         // sampler paired the weighted family by hand, and nothing said a caller
         // had to.
@@ -376,12 +382,12 @@ impl Sampler {
         let cell_kernel: Box<dyn ErasedCellKernel> = match (&config.cell_model, family) {
             (Some(factory), _) => factory.kernel(),
             (None, crate::engine::model::ResponseFamily::RobustT { .. }) => {
-                crate::extensions::erasure::weighted_cell_kernel(family_sigma_mu_sq)
+                crate::extensions::erasure::weighted_cell_kernel(family_sigma_mu_sq)?
             }
             (None, _) if heteroscedastic_scale => {
-                crate::extensions::erasure::weighted_cell_kernel(family_sigma_mu_sq)
+                crate::extensions::erasure::weighted_cell_kernel(family_sigma_mu_sq)?
             }
-            (None, _) => crate::extensions::erasure::default_cell_kernel(family_sigma_mu_sq),
+            (None, _) => crate::extensions::erasure::default_cell_kernel(family_sigma_mu_sq)?,
         };
         // The cell basis. A basis payload and a basis must arrive
         // together and agree on q; a scalar payload takes no basis. Checked
@@ -469,13 +475,13 @@ impl Sampler {
         let scale_model: Box<dyn ErasedScaleModel> = match (&config.scale_model, family) {
             (Some(factory), _) => factory.scale(),
             (None, crate::engine::model::ResponseFamily::Gaussian) => {
-                crate::extensions::erasure::default_scale_model(config.nu, lambda)
+                crate::extensions::erasure::default_scale_model(config.nu, lambda)?
             }
             (None, crate::engine::model::ResponseFamily::BinaryProbit) => {
                 Box::new(crate::extensions::scale::PinnedSigma::unit())
             }
             (None, crate::engine::model::ResponseFamily::RobustT { .. }) => Box::new(
-                crate::extensions::scale::WeightedGlobalSigma::new(config.nu, lambda),
+                crate::extensions::scale::WeightedGlobalSigma::new(config.nu, lambda)?,
             ),
         };
         let response_model: Option<Box<dyn ErasedResponseModel>> =
@@ -488,7 +494,7 @@ impl Sampler {
                 }
                 .into(),
                 (None, crate::engine::model::ResponseFamily::RobustT { df }) => {
-                    Box::new(crate::extensions::response::RobustTStep::new(df))
+                    Box::new(crate::extensions::response::RobustTStep::new(df)?)
                         as Box<dyn ErasedResponseModel>
                 }
                 .into(),
@@ -1059,6 +1065,51 @@ mod tests {
         assert_eq!(splitmix64(&mut state), 0xF88B_B8A8_724C_81EC);
     }
 
+    /// A response that is an exact linear function of the features has zero
+    /// OLS residual, so the σ² prior calibrates λ to 0. The global σ² draw
+    /// is well-defined under that prior, so the Gaussian, robust-t and
+    /// probit families fit; the H variance calibration cannot accept it and
+    /// refuses with `DegenerateResidual`.
+    #[test]
+    fn zero_residual_response_fits_unless_a_scale_model_refuses_lambda_zero() {
+        let n = 50;
+        let column: Vec<f64> = (0..n).map(|i| i as f64 / (n - 1) as f64).collect();
+        let x = Data::new(column.clone(), n, 1).unwrap();
+        let linear: Vec<f64> = column.iter().map(|&v| 2.0 * v).collect();
+        let quick = || {
+            AddiVortesConfig::new(3)
+                .with_m(3)
+                .with_omega(0.5)
+                .with_burn_in(2)
+                .with_draws(2)
+        };
+        let gaussian = quick().fit(&x, &linear).expect("the Gaussian family fits");
+        assert!(
+            gaussian
+                .posterior()
+                .sigma_sq()
+                .iter()
+                .all(|s| s.is_finite() && *s > 0.0)
+        );
+        quick()
+            .with_response_family(crate::engine::model::ResponseFamily::RobustT { df: 5.0 })
+            .fit(&x, &linear)
+            .expect("the robust-t family fits");
+        let flag: Vec<f64> = (0..n).map(|i| f64::from(u8::from(i >= n / 2))).collect();
+        let x_flag = Data::new(flag.clone(), n, 1).unwrap();
+        quick()
+            .with_response_family(crate::engine::model::ResponseFamily::BinaryProbit)
+            .fit(&x_flag, &flag)
+            .expect("the label family fits separable data");
+        assert_eq!(
+            quick()
+                .with_scale_model(crate::extensions::scale::HVariance::new(4).unwrap())
+                .fit(&x, &linear)
+                .unwrap_err(),
+            AddiVortesError::DegenerateResidual {}
+        );
+    }
+
     /// The full 32-byte key for representative seeds, byte for byte. Pure integer
     /// arithmetic, bit-identical on every target, so this runs on every CI leg.
     #[test]
@@ -1407,7 +1458,7 @@ mod tests {
         let n = y.len();
         let sigma_mu_sq = scaler::sigma_mu_sq(3.0, 4);
         let weighted_model =
-            || crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq);
+            || crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap();
         let paper_moves = || MoveSetBuilder::stone_gosling().build().unwrap();
         let composed =
             Sampler::with_cell_model(small_config(23), &x, &y, paper_moves(), weighted_model())
@@ -1453,7 +1504,7 @@ mod tests {
         let weights: Vec<f64> = (0..n).map(|i| 0.5 + 0.25 * i as f64).collect();
         let sigma_mu_sq = scaler::sigma_mu_sq(3.0, 4);
         let weighted_model =
-            || crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq);
+            || crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap();
         let paper_moves = || MoveSetBuilder::stone_gosling().build().unwrap();
         let via_scale =
             Sampler::with_cell_model(small_config(29), &x, &y, paper_moves(), weighted_model())
@@ -1625,7 +1676,8 @@ mod tests {
         // and the conjugate formulas by hand.
         let sigma_mu_sq = scaler::sigma_mu_sq(3.0, 1);
         let move_set = MoveSetBuilder::stone_gosling().build().unwrap();
-        let dists: Vec<Arc<dyn CoordinateDistribution>> = vec![Arc::new(EuclideanNormal::new(0.8))];
+        let dists: Vec<Arc<dyn CoordinateDistribution>> =
+            vec![Arc::new(EuclideanNormal::new(0.8).unwrap())];
         let weights = [1.0_f64];
         let ctx = ModelCtx::new(
             expected_sigma_sq,

@@ -47,8 +47,8 @@ test_that("each extension point is reachable as a payload", {
 })
 
 test_that("a bad dart alpha is an error, not a process abort", {
-  # DartInclusion::new panics on a non-positive alpha; reaching that from an R
-  # list would take down the R session. The core validates the value first.
+  # A non-positive alpha is rejected under the spec key before any constructor
+  # sees it.
   expect_error(
     addivortes(matrix(stats::runif(20), 10, 2), stats::runif(10),
       seed = 1, inclusion = list(type = "dart", alpha = 0)

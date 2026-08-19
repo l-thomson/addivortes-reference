@@ -24,6 +24,7 @@
 //! [`GlobalSigma`]: crate::extensions::scale::GlobalSigma
 //! [`ScaleCtx::response_weights`]: crate::extensions::scale::ScaleCtx::response_weights
 
+use crate::engine::error::{Result, require_positive_finite};
 use crate::extensions::response::ResponseModel;
 
 /// The robust-t scale-mixture step: once per sweep, redraw the
@@ -40,13 +41,14 @@ pub struct RobustTStep {
 
 impl RobustTStep {
     /// A robust-t step with ν′ = `df` error degrees of freedom
-    /// (dimensionless count; must be finite and strictly positive,
-    /// debug-asserted here, validated at fit time by the family assembly).
-    /// Small ν′ (3–8) is the robust regime; ν′ → ∞ recovers Gaussian
-    /// errors.
-    pub fn new(df: f64) -> Self {
-        debug_assert!(df.is_finite() && df > 0.0);
-        Self { df }
+    /// (dimensionless count). Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless `df` is finite and strictly positive. Small ν′ (3–8) is the
+    /// robust regime; ν′ → ∞ recovers Gaussian errors.
+    pub fn new(df: f64) -> Result<Self> {
+        Ok(Self {
+            df: require_positive_finite("df", df)?,
+        })
     }
 }
 
@@ -86,6 +88,16 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
     use rand_core::SeedableRng;
 
+    #[test]
+    fn robust_t_rejects_a_bad_df() {
+        for bad in [0.0, -3.0, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                RobustTStep::new(bad),
+                Err(crate::AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "df"
+            ));
+        }
+    }
+
     /// The λ full conditional has mean (ν′+1)/(ν′ + e²/σ²): near-unit for
     /// on-fit observations, shrinking toward 0 as the residual grows: the
     /// robustness mechanism, checked on long-run averages.
@@ -99,7 +111,7 @@ mod tests {
         let mut sums = [0.0_f64; 2];
         let n = 4000;
         for _ in 0..n {
-            let mut step = RobustTStep::new(df);
+            let mut step = RobustTStep::new(df).unwrap();
             let mut working = [0.0_f64; 2];
             let mut weights = [0.0_f64; 2];
             step.augment(&y, &fit, sigma_sq, &mut rng, &mut working, &mut weights)
@@ -134,7 +146,7 @@ mod tests {
         ]);
         let coord_dists: Vec<std::sync::Arc<dyn crate::extensions::coord::CoordinateDistribution>> =
             vec![std::sync::Arc::new(
-                crate::extensions::coord::EuclideanNormal::new(0.8),
+                crate::extensions::coord::EuclideanNormal::new(0.8).unwrap(),
             )];
         let weights_enc = [1.0_f64];
         let unit = vec![1.0_f64; n];
@@ -154,11 +166,11 @@ mod tests {
             response_weights,
         };
 
-        let mut weighted = WeightedGlobalSigma::new(6.0, 0.02);
+        let mut weighted = WeightedGlobalSigma::new(6.0, 0.02).unwrap();
         let mut rng_a = ChaCha8Rng::seed_from_u64(3);
         ScaleModel::update(&mut weighted, &make_ctx(Some(unit.as_slice())), &mut rng_a).unwrap();
 
-        let mut unweighted = crate::extensions::scale::GlobalSigma::new(6.0, 0.02);
+        let mut unweighted = crate::extensions::scale::GlobalSigma::new(6.0, 0.02).unwrap();
         let mut rng_b = ChaCha8Rng::seed_from_u64(3);
         ScaleModel::update(&mut unweighted, &make_ctx(None), &mut rng_b).unwrap();
 
@@ -181,7 +193,7 @@ mod tests {
         ]);
         let coord_dists: Vec<std::sync::Arc<dyn crate::extensions::coord::CoordinateDistribution>> =
             vec![std::sync::Arc::new(
-                crate::extensions::coord::EuclideanNormal::new(0.8),
+                crate::extensions::coord::EuclideanNormal::new(0.8).unwrap(),
             )];
         let weights_enc = [1.0_f64];
         let mut soft = vec![1.0_f64; n];
@@ -203,10 +215,10 @@ mod tests {
             response_weights,
         };
 
-        let mut a = WeightedGlobalSigma::new(6.0, 0.02);
+        let mut a = WeightedGlobalSigma::new(6.0, 0.02).unwrap();
         let mut rng_a = ChaCha8Rng::seed_from_u64(9);
         ScaleModel::update(&mut a, &make_ctx(Some(soft.as_slice())), &mut rng_a).unwrap();
-        let mut b = WeightedGlobalSigma::new(6.0, 0.02);
+        let mut b = WeightedGlobalSigma::new(6.0, 0.02).unwrap();
         let mut rng_b = ChaCha8Rng::seed_from_u64(9);
         ScaleModel::update(&mut b, &make_ctx(Some(unit.as_slice())), &mut rng_b).unwrap();
         assert!(a.sigma_sq() < b.sigma_sq());

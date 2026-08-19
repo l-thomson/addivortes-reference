@@ -919,7 +919,7 @@ fn with_scale_ctx<R>(y: &[f64], fit: &[f64], body: impl FnOnce(&ScaleCtx) -> R) 
     let assigner =
         crate::extensions::distance::default_assigner(vec![crate::engine::data::Metric::Euclidean]);
     let coord_dists: Vec<std::sync::Arc<dyn CoordinateDistribution>> = vec![std::sync::Arc::new(
-        crate::extensions::coord::EuclideanNormal::new(0.8),
+        crate::extensions::coord::EuclideanNormal::new(0.8).unwrap(),
     )];
     let weights_enc = [1.0_f64];
     let ctx = ScaleCtx {
@@ -2805,7 +2805,7 @@ mod tests {
 
     fn dists(p: usize) -> Vec<std::sync::Arc<dyn CoordinateDistribution>> {
         (0..p)
-            .map(|_| std::sync::Arc::new(EuclideanNormal::new(0.8)) as std::sync::Arc<_>)
+            .map(|_| std::sync::Arc::new(EuclideanNormal::new(0.8).unwrap()) as std::sync::Arc<_>)
             .collect()
     }
 
@@ -2846,12 +2846,12 @@ mod tests {
         });
 
         assert!(all_passed(&check_coordinate_distribution(
-            &EuclideanNormal::new(0.8),
+            &EuclideanNormal::new(0.8).unwrap(),
             2000,
             &mut rng(2)
         )));
         assert!(all_passed(&check_coordinate_distribution(
-            &WrappedNormal::new(0.8),
+            &WrappedNormal::new(0.8).unwrap(),
             2000,
             &mut rng(3)
         )));
@@ -3243,10 +3243,10 @@ mod tests {
     struct LyingDistribution;
     impl CoordinateDistribution for LyingDistribution {
         fn sample(&self, rng: &mut dyn rand_core::Rng) -> f64 {
-            EuclideanNormal::new(2.0).sample(rng)
+            EuclideanNormal::new(2.0).unwrap().sample(rng)
         }
         fn log_density(&self, x: f64) -> f64 {
-            EuclideanNormal::new(0.5).log_density(x)
+            EuclideanNormal::new(0.5).unwrap().log_density(x)
         }
     }
 
@@ -3269,7 +3269,7 @@ mod tests {
     fn the_shipped_coordinate_laws_pass_their_own_check_at_every_scale() {
         for sigma in [0.5, 1.0, 2.0, 3.0, 5.0] {
             for seed in 1..=4u8 {
-                let wrapped = crate::extensions::coord::WrappedNormal::new(sigma);
+                let wrapped = crate::extensions::coord::WrappedNormal::new(sigma).unwrap();
                 let results = check_coordinate_distribution(&wrapped, 4000, &mut rng(seed));
                 assert!(
                     all_passed(&results),
@@ -3277,7 +3277,7 @@ mod tests {
                      its own check (seed {seed}): {results:#?}"
                 );
 
-                let euclidean = EuclideanNormal::new(sigma);
+                let euclidean = EuclideanNormal::new(sigma).unwrap();
                 let results = check_coordinate_distribution(&euclidean, 4000, &mut rng(seed));
                 assert!(
                     all_passed(&results),
@@ -3295,10 +3295,10 @@ mod tests {
     struct MildlyWrongScale;
     impl CoordinateDistribution for MildlyWrongScale {
         fn sample(&self, rng: &mut dyn rand_core::Rng) -> f64 {
-            EuclideanNormal::new(1.0).sample(rng)
+            EuclideanNormal::new(1.0).unwrap().sample(rng)
         }
         fn log_density(&self, x: f64) -> f64 {
-            EuclideanNormal::new(1.2).log_density(x)
+            EuclideanNormal::new(1.2).unwrap().log_density(x)
         }
     }
 
@@ -3422,7 +3422,7 @@ mod tests {
         let y = [0.31, -0.12, 0.07, 0.22, -0.44, 0.18];
         let fit = [0.1, -0.1, 0.0, 0.2, -0.3, 0.1];
         let results = check_scale_model(
-            || crate::extensions::scale::GlobalSigma::new(6.0, 0.02),
+            || crate::extensions::scale::GlobalSigma::new(6.0, 0.02).unwrap(),
             &y,
             &fit,
             &mut rng(31),
@@ -3455,7 +3455,7 @@ mod tests {
     fn the_shelf_scale_model_learns_from_the_data() {
         let (y, fit) = scale_fixture();
         let results = check_scale_model_learns_from_data(
-            || crate::extensions::scale::GlobalSigma::new(6.0, 0.02),
+            || crate::extensions::scale::GlobalSigma::new(6.0, 0.02).unwrap(),
             &y,
             &fit,
             31,
@@ -3756,7 +3756,7 @@ mod tests {
 
     #[test]
     fn linear_gaussian_model_passes_basis_conjugacy_checks() {
-        let model = crate::extensions::basis::LinearGaussianModel::new(0.05, 2);
+        let model = crate::extensions::basis::LinearGaussianModel::new(0.05, 2).unwrap();
         let basis_rows: Vec<Vec<f64>> = vec![
             vec![1.0, 0.2],
             vec![1.0, -0.4],
@@ -3787,7 +3787,7 @@ mod tests {
 
     #[test]
     fn inv_chi_sq_cell_model_passes_variance_conjugacy_checks() {
-        let model = crate::extensions::cell_model::InvChiSqCellModel::new(8.0, 0.5);
+        let model = crate::extensions::cell_model::InvChiSqCellModel::new(8.0, 0.5).unwrap();
         let results = check_variance_cell_model(&model, &variance_fixture(), &mut rng(41));
         assert!(all_passed(&results), "{results:#?}");
     }
@@ -3824,9 +3824,9 @@ mod tests {
             }
         }
 
-        let model = DroppedPriorTerm(crate::extensions::cell_model::InvChiSqCellModel::new(
-            8.0, 0.5,
-        ));
+        let model = DroppedPriorTerm(
+            crate::extensions::cell_model::InvChiSqCellModel::new(8.0, 0.5).unwrap(),
+        );
         let results = check_variance_cell_model(&model, &variance_fixture(), &mut rng(42));
         let bayes = results
             .iter()
@@ -3847,7 +3847,7 @@ mod tests {
     #[test]
     fn gaussian_cell_model_passes_conjugacy_checks() {
         let (observations, weights) = cell_fixture();
-        let model = crate::extensions::cell_model::GaussianCellModel::new(0.02);
+        let model = crate::extensions::cell_model::GaussianCellModel::new(0.02).unwrap();
         let results = check_cell_model(&model, 0.3, &observations, &weights, &mut rng(21));
         assert!(all_passed(&results), "{results:#?}");
     }
@@ -3856,7 +3856,7 @@ mod tests {
     fn weighted_gaussian_cell_model_passes_conjugacy_checks() {
         let observations = [0.31, -0.12, 0.07, 0.22, -0.44, 0.18];
         let weights = [0.5, 2.0, 1.0, 1.5, 0.8, 1.2];
-        let model = crate::extensions::cell_model::WeightedGaussianModel::new(0.02);
+        let model = crate::extensions::cell_model::WeightedGaussianModel::new(0.02).unwrap();
         let results = check_cell_model(&model, 0.3, &observations, &weights, &mut rng(22));
         assert!(all_passed(&results), "{results:#?}");
     }
@@ -3898,10 +3898,12 @@ mod tests {
                 stats: &[Self::Stats],
                 sigma_sq: f64,
             ) -> std::result::Result<f64, Self::Error> {
-                crate::extensions::cell_model::GaussianCellModel::new(0.02).log_marginal_terms(
-                    &stats.iter().map(|s| s.inner.clone()).collect::<Vec<_>>(),
-                    sigma_sq,
-                )
+                crate::extensions::cell_model::GaussianCellModel::new(0.02)
+                    .unwrap()
+                    .log_marginal_terms(
+                        &stats.iter().map(|s| s.inner.clone()).collect::<Vec<_>>(),
+                        sigma_sq,
+                    )
             }
             fn draw_cell_values(
                 &self,
@@ -3909,11 +3911,13 @@ mod tests {
                 sigma_sq: f64,
                 rng: &mut dyn rand_core::Rng,
             ) -> std::result::Result<Vec<f64>, Self::Error> {
-                crate::extensions::cell_model::GaussianCellModel::new(0.02).draw_cell_values(
-                    &stats.iter().map(|s| s.inner.clone()).collect::<Vec<_>>(),
-                    sigma_sq,
-                    rng,
-                )
+                crate::extensions::cell_model::GaussianCellModel::new(0.02)
+                    .unwrap()
+                    .draw_cell_values(
+                        &stats.iter().map(|s| s.inner.clone()).collect::<Vec<_>>(),
+                        sigma_sq,
+                        rng,
+                    )
             }
         }
         let (observations, weights) = cell_fixture();
@@ -3961,6 +3965,7 @@ mod tests {
                 rng: &mut dyn rand_core::Rng,
             ) -> std::result::Result<Vec<f64>, Self::Error> {
                 crate::extensions::cell_model::GaussianCellModel::new(DROPPED_SIGMA_MU_SQ)
+                    .unwrap()
                     .draw_cell_values(stats, sigma_sq, rng)
             }
         }
@@ -3995,6 +4000,7 @@ mod tests {
                 sigma_sq: f64,
             ) -> std::result::Result<f64, Self::Error> {
                 crate::extensions::cell_model::GaussianCellModel::new(0.02)
+                    .unwrap()
                     .log_marginal_terms(stats, sigma_sq)
             }
             fn draw_cell_values(
@@ -4006,7 +4012,8 @@ mod tests {
                 // wrong: posterior SD scaled down 4× (overconfident draws),
                 // but only once data is in the cell, so the prior draw the
                 // check relies on stays correct.
-                let reference = crate::extensions::cell_model::GaussianCellModel::new(0.02);
+                let reference =
+                    crate::extensions::cell_model::GaussianCellModel::new(0.02).unwrap();
                 let sigma_mu_sq = 0.02_f64;
                 let mut values = reference.draw_cell_values(stats, sigma_sq, rng)?;
                 for (value, cell) in values.iter_mut().zip(stats) {
@@ -4077,7 +4084,7 @@ mod tests {
         let y = [0.4, -0.2, 0.5, 0.1, -0.3, 0.25];
         let fit = [0.1, -0.1, 0.2, 0.05, -0.2, 0.1];
         let results = check_response_model(
-            || crate::extensions::response::RobustTStep::new(5.0),
+            || crate::extensions::response::RobustTStep::new(5.0).unwrap(),
             &y,
             &fit,
             0.04,
@@ -4188,7 +4195,7 @@ mod tests {
 
     #[test]
     fn softmax_kernel_passes_membership_checks() {
-        let kernel = crate::extensions::membership::SoftmaxKernel::new(0.25);
+        let kernel = crate::extensions::membership::SoftmaxKernel::new(0.25).unwrap();
         let results = check_membership_kernel(&kernel, &membership_keys());
         assert!(all_passed(&results), "{results:#?}");
     }
@@ -4577,7 +4584,7 @@ mod tests {
     /// must pass every basis-payload check.
     #[test]
     fn a_caller_written_basis_payload_can_be_checked() {
-        let model = crate::extensions::basis::LinearGaussianModel::new(0.5, 2);
+        let model = crate::extensions::basis::LinearGaussianModel::new(0.5, 2).unwrap();
         let basis_rows = vec![
             vec![1.0, -0.4],
             vec![1.0, 0.1],

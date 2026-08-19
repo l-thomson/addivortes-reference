@@ -2,6 +2,7 @@
 //! with any weight-producing response step (robust-t, and any custom
 //! `ResponseModel` that fills `weights`).
 
+use crate::engine::error::{Result, require_non_negative_finite, require_positive_finite};
 use crate::extensions::scale::{ScaleCtx, ScaleModel, sigma_sq_gamma_params};
 
 /// The precision-weighted global σ² Gibbs draw: identical to
@@ -22,13 +23,16 @@ impl WeightedGlobalSigma {
     /// A weighted global-σ² model with prior degrees of freedom ν and
     /// calibrated λ, exactly as
     /// [`GlobalSigma::new`](crate::extensions::scale::GlobalSigma::new). σ² starts
-    /// at 1.0: never read before the first update.
-    pub fn new(nu: f64, lambda: f64) -> Self {
-        Self {
-            nu,
-            lambda,
+    /// at 1.0: never read before the first update. Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless ν is finite and strictly positive and λ is finite and
+    /// non-negative.
+    pub fn new(nu: f64, lambda: f64) -> Result<Self> {
+        Ok(Self {
+            nu: require_positive_finite("nu", nu)?,
+            lambda: require_non_negative_finite("lambda", lambda)?,
             sigma_sq: 1.0,
-        }
+        })
     }
 }
 

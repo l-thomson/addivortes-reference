@@ -1,5 +1,6 @@
 //! The spherical coordinate law: a wrapped normal on [−π, π].
 
+use crate::engine::error::{Result, require_positive_finite};
 use crate::engine::mathsfn;
 use crate::extensions::coord::{CoordinateDistribution, wrap_to_pi};
 
@@ -18,10 +19,13 @@ const WRAPPED_NORMAL_TERMS: i32 = 10;
 
 impl WrappedNormal {
     /// Wrapped N(0, σ_c²) on [−π, π] with underlying standard deviation
-    /// `sigma_c` (must be positive).
-    pub fn new(sigma_c: f64) -> Self {
-        debug_assert!(sigma_c > 0.0);
-        Self { sigma_c }
+    /// `sigma_c` (radians). Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless `sigma_c` is finite and strictly positive.
+    pub fn new(sigma_c: f64) -> Result<Self> {
+        Ok(Self {
+            sigma_c: require_positive_finite("sigma_c", sigma_c)?,
+        })
     }
 }
 

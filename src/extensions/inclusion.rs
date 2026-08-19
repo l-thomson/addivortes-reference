@@ -33,9 +33,7 @@ pub use dart::DartInclusion;
 pub use uniform::UniformInclusion;
 pub use weighted::WeightedInclusion;
 
-use std::sync::Arc;
-
-use crate::engine::error::{AddiVortesError, Result};
+use crate::engine::error::{Result, from_extension};
 use crate::engine::mathsfn;
 use crate::extensions::moves::uniform_f64;
 
@@ -160,9 +158,7 @@ impl<M: InclusionModel + Clone + 'static> ErasedInclusionModel for M {
     }
 
     fn update(&mut self, usage: &InclusionUsage, rng: &mut dyn rand_core::Rng) -> Result<()> {
-        InclusionModel::update(self, usage, rng).map_err(|e| AddiVortesError::Extension {
-            source: Arc::new(e),
-        })
+        InclusionModel::update(self, usage, rng).map_err(from_extension)
     }
 
     fn clone_erased(&self) -> Box<dyn ErasedInclusionModel> {

@@ -10,9 +10,8 @@
 //! that lets them be swapped.
 
 use std::any::Any;
-use std::sync::Arc;
 
-use crate::engine::error::{AddiVortesError, Result};
+use crate::engine::error::{Result, from_extension};
 use crate::extensions::cell_model::{
     CellModel, CellStats, GaussianCellModel, WeightedGaussianModel,
 };
@@ -22,21 +21,21 @@ use crate::extensions::scale::{GlobalSigma, ScaleCtx, ScaleModel};
 /// This extension point's fit-time default cell kernel: the Gaussian conjugate model,
 /// type-erased so the sampler resolves the default without naming a
 /// concrete approach.
-pub(crate) fn default_cell_kernel(sigma_mu_sq: f64) -> Box<dyn ErasedCellKernel> {
-    Box::new(KernelOf(GaussianCellModel::new(sigma_mu_sq)))
+pub(crate) fn default_cell_kernel(sigma_mu_sq: f64) -> Result<Box<dyn ErasedCellKernel>> {
+    Ok(Box::new(KernelOf(GaussianCellModel::new(sigma_mu_sq)?)))
 }
 
 /// The weight-aware sibling of [`default_cell_kernel`], assembled by the
 /// weight-producing response families (robust-t): the same conjugate
 /// Gaussian cells, accumulated under per-observation precisions.
-pub(crate) fn weighted_cell_kernel(sigma_mu_sq: f64) -> Box<dyn ErasedCellKernel> {
-    Box::new(KernelOf(WeightedGaussianModel::new(sigma_mu_sq)))
+pub(crate) fn weighted_cell_kernel(sigma_mu_sq: f64) -> Result<Box<dyn ErasedCellKernel>> {
+    Ok(Box::new(KernelOf(WeightedGaussianModel::new(sigma_mu_sq)?)))
 }
 
 /// This extension point's fit-time default scale model: the global σ² Gibbs draw,
 /// type-erased for the same reason.
-pub(crate) fn default_scale_model(nu: f64, lambda: f64) -> Box<dyn ErasedScaleModel> {
-    Box::new(GlobalSigma::new(nu, lambda))
+pub(crate) fn default_scale_model(nu: f64, lambda: f64) -> Result<Box<dyn ErasedScaleModel>> {
+    Ok(Box::new(GlobalSigma::new(nu, lambda)?))
 }
 
 // ---------------------------------------------------------------------------
@@ -195,9 +194,7 @@ impl<M: CellModel + 'static> ErasedCellKernel for KernelOf<M> {
     fn log_marginal(&self, stats: &StatsBox, sigma_sq: f64) -> Result<f64> {
         self.0
             .log_marginal_terms(self.stats(stats), sigma_sq)
-            .map_err(|e| AddiVortesError::Extension {
-                source: Arc::new(e),
-            })
+            .map_err(from_extension)
     }
 
     fn draw_cell_values(
@@ -208,9 +205,7 @@ impl<M: CellModel + 'static> ErasedCellKernel for KernelOf<M> {
     ) -> Result<Vec<f64>> {
         self.0
             .draw_cell_payload(self.stats(stats), sigma_sq, rng)
-            .map_err(|e| AddiVortesError::Extension {
-                source: Arc::new(e),
-            })
+            .map_err(from_extension)
     }
 
     fn payload_width(&self) -> usize {
@@ -230,9 +225,7 @@ pub(crate) trait ErasedScaleModel: std::fmt::Debug + Send + Sync {
 
 impl<S: ScaleModel> ErasedScaleModel for S {
     fn update(&mut self, ctx: &ScaleCtx<'_>, rng: &mut dyn rand_core::Rng) -> Result<()> {
-        ScaleModel::update(self, ctx, rng).map_err(|e| AddiVortesError::Extension {
-            source: Arc::new(e),
-        })
+        ScaleModel::update(self, ctx, rng).map_err(from_extension)
     }
     fn sigma_sq(&self) -> f64 {
         ScaleModel::sigma_sq(self)
@@ -265,10 +258,7 @@ impl<K: ResponseModel> ErasedResponseModel for K {
         working: &mut [f64],
         weights: &mut [f64],
     ) -> Result<()> {
-        ResponseModel::augment(self, y, fit, sigma_sq, rng, working, weights).map_err(|e| {
-            AddiVortesError::Extension {
-                source: Arc::new(e),
-            }
-        })
+        ResponseModel::augment(self, y, fit, sigma_sq, rng, working, weights)
+            .map_err(from_extension)
     }
 }

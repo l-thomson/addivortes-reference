@@ -50,7 +50,7 @@ impl core::panic::unwind_safe::UnwindSafe for addivortes::basis::LinearCellStats
 pub struct addivortes::basis::LinearGaussianModel
 impl addivortes::basis::LinearGaussianModel
 pub fn addivortes::basis::LinearGaussianModel::draw_cell_coefficients(&self, &[addivortes::basis::LinearCellStats], f64, &mut dyn rand_core::Rng) -> alloc::vec::Vec<alloc::vec::Vec<f64>>
-pub fn addivortes::basis::LinearGaussianModel::new(f64, usize) -> Self
+pub fn addivortes::basis::LinearGaussianModel::new(f64, usize) -> addivortes::Result<Self>
 pub fn addivortes::basis::LinearGaussianModel::q(&self) -> usize
 impl addivortes::cell_model::CellModel for addivortes::basis::LinearGaussianModel
 pub type addivortes::basis::LinearGaussianModel::Error = core::convert::Infallible
@@ -194,7 +194,7 @@ pub fn addivortes::calibration::getting_it_right(&addivortes::calibration::Gewek
 pub mod addivortes::cell_model
 pub struct addivortes::cell_model::GaussianCellModel
 impl addivortes::cell_model::GaussianCellModel
-pub fn addivortes::cell_model::GaussianCellModel::new(f64) -> Self
+pub fn addivortes::cell_model::GaussianCellModel::new(f64) -> addivortes::Result<Self>
 impl addivortes::cell_model::CellModel for addivortes::cell_model::GaussianCellModel
 pub type addivortes::cell_model::GaussianCellModel::Error = core::convert::Infallible
 pub type addivortes::cell_model::GaussianCellModel::Stats = addivortes::cell_model::GaussianCellStats
@@ -243,7 +243,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for addivortes::cell_model::Gaussia
 impl core::panic::unwind_safe::UnwindSafe for addivortes::cell_model::GaussianCellStats
 pub struct addivortes::cell_model::InvChiSqCellModel
 impl addivortes::cell_model::InvChiSqCellModel
-pub fn addivortes::cell_model::InvChiSqCellModel::new(f64, f64) -> Self
+pub fn addivortes::cell_model::InvChiSqCellModel::new(f64, f64) -> addivortes::Result<Self>
 impl addivortes::cell_model::CellModel for addivortes::cell_model::InvChiSqCellModel
 pub type addivortes::cell_model::InvChiSqCellModel::Error = core::convert::Infallible
 pub type addivortes::cell_model::InvChiSqCellModel::Stats = addivortes::cell_model::InvChiSqStats
@@ -292,7 +292,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for addivortes::cell_model::InvChiS
 impl core::panic::unwind_safe::UnwindSafe for addivortes::cell_model::InvChiSqStats
 pub struct addivortes::cell_model::WeightedGaussianModel
 impl addivortes::cell_model::WeightedGaussianModel
-pub fn addivortes::cell_model::WeightedGaussianModel::new(f64) -> Self
+pub fn addivortes::cell_model::WeightedGaussianModel::new(f64) -> addivortes::Result<Self>
 impl addivortes::cell_model::CellModel for addivortes::cell_model::WeightedGaussianModel
 pub type addivortes::cell_model::WeightedGaussianModel::Error = core::convert::Infallible
 pub type addivortes::cell_model::WeightedGaussianModel::Stats = addivortes::cell_model::WeightedGaussianStats
@@ -802,7 +802,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for addivortes::response::AlbertChi
 impl core::panic::unwind_safe::UnwindSafe for addivortes::response::AlbertChibProbit
 pub struct addivortes::response::RobustTStep
 impl addivortes::response::RobustTStep
-pub fn addivortes::response::RobustTStep::new(f64) -> Self
+pub fn addivortes::response::RobustTStep::new(f64) -> addivortes::Result<Self>
 impl addivortes::response::ResponseModel for addivortes::response::RobustTStep
 pub type addivortes::response::RobustTStep::Error = core::convert::Infallible
 pub fn addivortes::response::RobustTStep::augment(&mut self, &[f64], &[f64], f64, &mut dyn rand_core::Rng, &mut [f64], &mut [f64]) -> core::result::Result<(), Self::Error>
@@ -833,7 +833,7 @@ pub fn addivortes::response::RobustTStep::augment(&mut self, &[f64], &[f64], f64
 pub mod addivortes::scale
 pub struct addivortes::scale::GlobalSigma
 impl addivortes::scale::GlobalSigma
-pub fn addivortes::scale::GlobalSigma::new(f64, f64) -> Self
+pub fn addivortes::scale::GlobalSigma::new(f64, f64) -> addivortes::Result<Self>
 impl addivortes::scale::ScaleModel for addivortes::scale::GlobalSigma
 pub type addivortes::scale::GlobalSigma::Error = core::convert::Infallible
 pub fn addivortes::scale::GlobalSigma::heteroscedastic(&self) -> bool
@@ -856,12 +856,12 @@ impl core::panic::unwind_safe::RefUnwindSafe for addivortes::scale::GlobalSigma
 impl core::panic::unwind_safe::UnwindSafe for addivortes::scale::GlobalSigma
 pub struct addivortes::scale::HVariance
 impl addivortes::scale::HVariance
-pub fn addivortes::scale::HVariance::new(usize) -> Self
+pub fn addivortes::scale::HVariance::new(usize) -> addivortes::Result<Self>
 pub fn addivortes::scale::HVariance::prior_in_force(&self) -> core::option::Option<(f64, f64)>
 pub fn addivortes::scale::HVariance::s_sq_values(&self) -> core::option::Option<&[f64]>
 pub fn addivortes::scale::HVariance::tessellations(&self) -> core::option::Option<&[addivortes::Tessellation]>
 pub fn addivortes::scale::HVariance::with_cell_model<M: addivortes::cell_model::CellModel + core::clone::Clone + 'static>(self, M) -> Self
-pub fn addivortes::scale::HVariance::with_prior(self, f64, f64) -> Self
+pub fn addivortes::scale::HVariance::with_prior(self, f64, f64) -> addivortes::Result<Self>
 impl addivortes::scale::ScaleModel for addivortes::scale::HVariance
 pub type addivortes::scale::HVariance::Error = addivortes::AddiVortesError
 pub fn addivortes::scale::HVariance::heteroscedastic(&self) -> bool
@@ -881,7 +881,7 @@ impl !core::panic::unwind_safe::RefUnwindSafe for addivortes::scale::HVariance
 impl !core::panic::unwind_safe::UnwindSafe for addivortes::scale::HVariance
 pub struct addivortes::scale::PinnedSigma
 impl addivortes::scale::PinnedSigma
-pub fn addivortes::scale::PinnedSigma::new(f64) -> Self
+pub fn addivortes::scale::PinnedSigma::new(f64) -> addivortes::Result<Self>
 pub fn addivortes::scale::PinnedSigma::unit() -> Self
 impl addivortes::scale::ScaleModel for addivortes::scale::PinnedSigma
 pub type addivortes::scale::PinnedSigma::Error = core::convert::Infallible
@@ -930,7 +930,7 @@ impl<'a> !core::panic::unwind_safe::RefUnwindSafe for addivortes::scale::ScaleCt
 impl<'a> !core::panic::unwind_safe::UnwindSafe for addivortes::scale::ScaleCtx<'a>
 pub struct addivortes::scale::WeightedGlobalSigma
 impl addivortes::scale::WeightedGlobalSigma
-pub fn addivortes::scale::WeightedGlobalSigma::new(f64, f64) -> Self
+pub fn addivortes::scale::WeightedGlobalSigma::new(f64, f64) -> addivortes::Result<Self>
 impl addivortes::scale::ScaleModel for addivortes::scale::WeightedGlobalSigma
 pub type addivortes::scale::WeightedGlobalSigma::Error = core::convert::Infallible
 pub fn addivortes::scale::WeightedGlobalSigma::heteroscedastic(&self) -> bool
@@ -981,10 +981,11 @@ pub fn addivortes::scale::WeightedGlobalSigma::heteroscedastic(&self) -> bool
 pub fn addivortes::scale::WeightedGlobalSigma::precisions(&self) -> core::option::Option<&[f64]>
 pub fn addivortes::scale::WeightedGlobalSigma::sigma_sq(&self) -> f64
 pub fn addivortes::scale::WeightedGlobalSigma::update(&mut self, &addivortes::scale::ScaleCtx<'_>, &mut dyn rand_core::Rng) -> core::result::Result<(), Self::Error>
-pub fn addivortes::scale::h_variance_prior(f64, f64, usize) -> (f64, f64)
+pub fn addivortes::scale::h_variance_prior(f64, f64, usize) -> addivortes::Result<(f64, f64)>
 #[non_exhaustive] pub enum addivortes::AddiVortesError
 pub addivortes::AddiVortesError::DegenerateFeature
 pub addivortes::AddiVortesError::DegenerateFeature::col: usize
+pub addivortes::AddiVortesError::DegenerateResidual
 pub addivortes::AddiVortesError::DegenerateResponse
 pub addivortes::AddiVortesError::Extension
 pub addivortes::AddiVortesError::Extension::source: alloc::sync::Arc<(dyn core::error::Error + core::marker::Send + core::marker::Sync + 'static)>
@@ -1011,6 +1012,8 @@ pub addivortes::AddiVortesError::MembershipUnsupported::assigner: alloc::string:
 pub addivortes::AddiVortesError::MetricLengthMismatch
 pub addivortes::AddiVortesError::MetricLengthMismatch::metric_len: usize
 pub addivortes::AddiVortesError::MetricLengthMismatch::x_cols: usize
+pub addivortes::AddiVortesError::MissingStatistic
+pub addivortes::AddiVortesError::MissingStatistic::statistic: alloc::string::String
 pub addivortes::AddiVortesError::NonFiniteDistance
 pub addivortes::AddiVortesError::NonFiniteDistance::centre: usize
 pub addivortes::AddiVortesError::NonFiniteDistance::observation: usize
@@ -1391,7 +1394,7 @@ impl core::panic::unwind_safe::UnwindSafe for addivortes::CredibleInterval
 pub struct addivortes::DartInclusion
 impl addivortes::DartInclusion
 pub fn addivortes::DartInclusion::alpha(&self) -> f64
-pub fn addivortes::DartInclusion::new(f64, usize) -> Self
+pub fn addivortes::DartInclusion::new(f64, usize) -> addivortes::Result<Self>
 impl addivortes::InclusionModel for addivortes::DartInclusion
 pub type addivortes::DartInclusion::Error = core::convert::Infallible
 pub fn addivortes::DartInclusion::update(&mut self, &addivortes::InclusionUsage, &mut dyn rand_core::Rng) -> core::result::Result<(), Self::Error>
@@ -1487,7 +1490,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for addivortes::Euclidean
 impl core::panic::unwind_safe::UnwindSafe for addivortes::Euclidean
 pub struct addivortes::EuclideanNormal
 impl addivortes::EuclideanNormal
-pub fn addivortes::EuclideanNormal::new(f64) -> Self
+pub fn addivortes::EuclideanNormal::new(f64) -> addivortes::Result<Self>
 impl addivortes::CoordinateDistribution for addivortes::EuclideanNormal
 pub fn addivortes::EuclideanNormal::log_density(&self, f64) -> f64
 pub fn addivortes::EuclideanNormal::sample(&self, &mut dyn rand_core::Rng) -> f64
@@ -1566,7 +1569,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for addivortes::FittedScaler
 impl core::panic::unwind_safe::UnwindSafe for addivortes::FittedScaler
 pub struct addivortes::Gower
 impl addivortes::Gower
-pub fn addivortes::Gower::new(alloc::vec::Vec<addivortes::GowerKind>) -> Self
+pub fn addivortes::Gower::new(alloc::vec::Vec<addivortes::GowerKind>) -> addivortes::Result<Self>
 impl addivortes::PairwiseDistance for addivortes::Gower
 pub fn addivortes::Gower::all_euclidean(&self) -> bool
 pub fn addivortes::Gower::distance(&self, &[f64], &[f64], &[usize]) -> f64
@@ -1923,7 +1926,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for addivortes::ShiftedPoissonBinom
 impl core::panic::unwind_safe::UnwindSafe for addivortes::ShiftedPoissonBinomial
 pub struct addivortes::SoftmaxKernel
 impl addivortes::SoftmaxKernel
-pub fn addivortes::SoftmaxKernel::new(f64) -> Self
+pub fn addivortes::SoftmaxKernel::new(f64) -> addivortes::Result<Self>
 pub fn addivortes::SoftmaxKernel::tau(&self) -> f64
 impl addivortes::MembershipKernel for addivortes::SoftmaxKernel
 pub fn addivortes::SoftmaxKernel::weights(&self, &[f64], &mut [f64])
@@ -2060,7 +2063,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for addivortes::WeightedInclusion
 impl core::panic::unwind_safe::UnwindSafe for addivortes::WeightedInclusion
 pub struct addivortes::WrappedNormal
 impl addivortes::WrappedNormal
-pub fn addivortes::WrappedNormal::new(f64) -> Self
+pub fn addivortes::WrappedNormal::new(f64) -> addivortes::Result<Self>
 impl addivortes::CoordinateDistribution for addivortes::WrappedNormal
 pub fn addivortes::WrappedNormal::log_density(&self, f64) -> f64
 pub fn addivortes::WrappedNormal::sample(&self, &mut dyn rand_core::Rng) -> f64

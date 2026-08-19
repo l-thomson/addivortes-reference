@@ -369,7 +369,7 @@ fn main() {
 
     // A tiny fixture: p = 3 covariates, 2 cells on dims {0, 2}.
     let dists: Vec<Arc<dyn CoordinateDistribution>> = (0..3)
-        .map(|_| Arc::new(EuclideanNormal::new(0.8)) as Arc<_>)
+        .map(|_| Arc::new(EuclideanNormal::new(0.8).unwrap()) as Arc<_>)
         .collect();
     let weights = vec![1.0; 3];
     let ctx = ModelCtx::new(1.0, 1.5, 10.0, 0.01, 3, &dists, &weights);

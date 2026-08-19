@@ -270,10 +270,9 @@ impl GateFixture {
         self.metrics
             .iter()
             .map(|metric| match metric {
-                Metric::Spherical => {
-                    Arc::new(WrappedNormal::new(self.sigma_c)) as Arc<dyn CoordinateDistribution>
-                }
-                _ => Arc::new(EuclideanNormal::new(self.sigma_c)) as Arc<_>,
+                Metric::Spherical => Arc::new(WrappedNormal::new(self.sigma_c).unwrap())
+                    as Arc<dyn CoordinateDistribution>,
+                _ => Arc::new(EuclideanNormal::new(self.sigma_c).unwrap()) as Arc<_>,
             })
             .collect()
     }
@@ -294,7 +293,8 @@ impl GateFixture {
             config.inclusion = Some(Arc::new(WeightedInclusion::new(self.weights.clone())));
         }
         if let Some(tau) = self.tau {
-            config = config.with_membership(crate::extensions::membership::SoftmaxKernel::new(tau));
+            config = config
+                .with_membership(crate::extensions::membership::SoftmaxKernel::new(tau).unwrap());
         }
         Sampler::pinned_prior_for_tests(
             config,
@@ -522,11 +522,13 @@ fn h_sampler(
         .with_sigma_c(base.sigma_c)
         .with_k(base.k);
     config.cell_model = Some(Arc::new(
-        crate::extensions::cell_model::WeightedGaussianModel::new(base.sigma_mu_sq()),
+        crate::extensions::cell_model::WeightedGaussianModel::new(base.sigma_mu_sq()).unwrap(),
     ));
     let shared = std::sync::Arc::new(std::sync::Mutex::new(
         crate::extensions::scale::HVariance::new(fixture.m_prime)
-            .with_prior(fixture.nu_prime, fixture.lambda_prime),
+            .unwrap()
+            .with_prior(fixture.nu_prime, fixture.lambda_prime)
+            .unwrap(),
     ));
     let sampler = Sampler::pinned_prior_for_tests(
         config,
@@ -787,7 +789,7 @@ fn draw_tessellation(
             // Soft guard (the same code path as the kernel's): every cell
             // carries strictly positive total membership mass.
             Some(tau) => {
-                let kernel = crate::extensions::membership::SoftmaxKernel::new(tau);
+                let kernel = crate::extensions::membership::SoftmaxKernel::new(tau).unwrap();
                 let membership = crate::engine::backfit::compute_memberships(
                     assigner,
                     &kernel,
@@ -1855,10 +1857,9 @@ fn dart_sampler(fixture: &GateFixture, seed: u64, y: Vec<f64>) -> Sampler {
         .with_lambda_c(fixture.lambda_c)
         .with_sigma_c(fixture.sigma_c)
         .with_k(fixture.k);
-    config.inclusion = Some(Arc::new(crate::extensions::inclusion::DartInclusion::new(
-        DART_ALPHA,
-        fixture.p(),
-    )));
+    config.inclusion = Some(Arc::new(
+        crate::extensions::inclusion::DartInclusion::new(DART_ALPHA, fixture.p()).unwrap(),
+    ));
     Sampler::pinned_prior_for_tests(
         config,
         fixture.x.clone(),

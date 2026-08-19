@@ -20,6 +20,7 @@
 //! in the true Gower dissimilarity; the [`PairwiseDistance`] contract asks
 //! no more).
 
+use crate::engine::error::{AddiVortesError, Result};
 use crate::extensions::distance::PairwiseDistance;
 
 /// One raw (pre-encoding) column of the design, as [`Gower`] needs to
@@ -69,19 +70,30 @@ impl Gower {
     /// [`NonFiniteDistance`](crate::AddiVortesError::NonFiniteDistance)
     /// instead of silently assigning with the wrong geometry.
     ///
+    /// Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// if a categorical column declares zero levels.
+    ///
     /// [`distance`]: PairwiseDistance::distance
-    pub fn new(columns: Vec<GowerKind>) -> Self {
+    pub fn new(columns: Vec<GowerKind>) -> Result<Self> {
         let mut weights = Vec::new();
-        for column in columns {
+        for (i, column) in columns.into_iter().enumerate() {
             match column {
                 GowerKind::Numeric => weights.push(1.0),
                 GowerKind::Categorical { levels } => {
-                    debug_assert!(levels > 0, "a categorical column has at least one level");
+                    if levels == 0 {
+                        return Err(AddiVortesError::InvalidHyperparameter {
+                            name: "levels".into(),
+                            reason: format!(
+                                "column {i} is categorical with 0 levels: it needs at least 1"
+                            ),
+                        });
+                    }
                     weights.extend(std::iter::repeat_n(0.5, levels));
                 }
             }
         }
-        Self { weights }
+        Ok(Self { weights })
     }
 }
 
@@ -113,7 +125,8 @@ mod tests {
         let gower = Gower::new(vec![
             GowerKind::Numeric,
             GowerKind::Categorical { levels: 3 },
-        ]);
+        ])
+        .unwrap();
         // Observation: numeric −0.5, category A. Encoded: [−0.5 | 0.5, −0.5, −0.5].
         let x = [-0.5, 0.5, -0.5, -0.5];
         // Centre 1: numeric 0.5 (full range), same category.
@@ -127,10 +140,18 @@ mod tests {
         assert_eq!(b, 1.0);
     }
 
+    #[test]
+    fn a_zero_level_categorical_column_is_an_error() {
+        assert!(matches!(
+            Gower::new(vec![GowerKind::Numeric, GowerKind::Categorical { levels: 0 }]),
+            Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "levels"
+        ));
+    }
+
     /// On an all-numeric layout Gower is plain L1 over the active dims.
     #[test]
     fn all_numeric_is_manhattan() {
-        let gower = Gower::new(vec![GowerKind::Numeric; 3]);
+        let gower = Gower::new(vec![GowerKind::Numeric; 3]).unwrap();
         let x = [0.1_f64, -0.3, 0.4];
         let c = [-0.2_f64, 0.2, 0.4];
         let l1 = (x[0] - c[0]).abs() + (x[1] - c[1]).abs();
@@ -143,7 +164,7 @@ mod tests {
     /// non-finite key (surfaced by the assigner as `NonFiniteDistance`).
     #[test]
     fn wrong_encoded_width_returns_non_finite() {
-        let gower = Gower::new(vec![GowerKind::Categorical { levels: 3 }]);
+        let gower = Gower::new(vec![GowerKind::Categorical { levels: 3 }]).unwrap();
         let x = [0.5, -0.5]; // two columns, layout says three
         let c = [0.5, -0.5];
         assert!(gower.distance(&x, &c, &[0]).is_nan());
@@ -157,7 +178,8 @@ mod tests {
         let gower = Gower::new(vec![
             GowerKind::Numeric,
             GowerKind::Categorical { levels: 2 },
-        ]);
+        ])
+        .unwrap();
         // Encoded fixture: numeric + 2 one-hot columns, rows on vertices.
         let x = crate::engine::data::Data::from_rows(&[
             [-0.4, 0.5, -0.5],
@@ -206,10 +228,13 @@ mod tests {
                 crate::engine::data::Metric::Euclidean,
                 crate::engine::data::Metric::Categorical,
             ])
-            .with_distance(Gower::new(vec![
-                GowerKind::Numeric,
-                GowerKind::Categorical { levels: 2 },
-            ]))
+            .with_distance(
+                Gower::new(vec![
+                    GowerKind::Numeric,
+                    GowerKind::Categorical { levels: 2 },
+                ])
+                .unwrap(),
+            )
             .fit(&x, &y)
             .unwrap();
         let predictions = model.predict(&x).unwrap();
@@ -243,10 +268,13 @@ mod tests {
                 crate::engine::data::Metric::Euclidean,
                 crate::engine::data::Metric::Categorical,
             ])
-            .with_distance(Gower::new(vec![
-                GowerKind::Numeric,
-                GowerKind::Categorical { levels: 5 }, // the fit sees 2
-            ]))
+            .with_distance(
+                Gower::new(vec![
+                    GowerKind::Numeric,
+                    GowerKind::Categorical { levels: 5 }, // the fit sees 2
+                ])
+                .unwrap(),
+            )
             .fit(&x, &y)
             .unwrap_err();
         assert!(matches!(

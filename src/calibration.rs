@@ -49,7 +49,7 @@
 use std::collections::BTreeMap;
 
 use crate::diagnostics::{ks_critical_value, ks_two_sample, sbc_rank};
-use crate::engine::error::Result;
+use crate::engine::error::{AddiVortesError, Result};
 
 // ---------------------------------------------------------------------------
 // Geweke joint-distribution cross-check (Geweke 2004)
@@ -134,7 +134,10 @@ pub trait SuccessiveConditional {
 /// The two simulators target the same joint distribution iff the kernel
 /// under test targets its own prior × likelihood; any statistic's
 /// disagreement is a defect (in the kernel, or in a generator that does not
-/// match the kernel's model; the battery cannot tell those apart).
+/// match the kernel's model; the battery cannot tell those apart). A
+/// statistic the marginal-conditional draw produces but the
+/// successive-conditional simulator never emits is
+/// [`AddiVortesError::MissingStatistic`].
 pub fn getting_it_right(
     spec: &GewekeSpec,
     mc_draw: &mut dyn FnMut() -> BTreeMap<String, f64>,
@@ -157,19 +160,21 @@ pub fn getting_it_right(
         }
     }
     let alpha_per_stat = spec.alpha / mc.len() as f64;
-    Ok(mc
-        .iter()
+    mc.iter()
         .map(|(name, mc_sample)| {
-            let sc_sample = sc_values
-                .get(name)
-                .unwrap_or_else(|| panic!("SC never emitted statistic `{name}`"));
-            GewekeOutcome {
+            let sc_sample =
+                sc_values
+                    .get(name)
+                    .ok_or_else(|| AddiVortesError::MissingStatistic {
+                        statistic: name.clone(),
+                    })?;
+            Ok(GewekeOutcome {
                 statistic: name.clone(),
                 d: ks_two_sample(mc_sample, sc_sample),
                 critical: ks_critical_value(alpha_per_stat, mc_sample.len(), sc_sample.len()),
-            }
+            })
         })
-        .collect())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -428,4 +433,48 @@ pub fn draw_weighted_subset(
         }
     }
     candidates.last().expect("d ≤ p yields subsets").clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::error::AddiVortesError;
+
+    struct Emits(&'static [&'static str]);
+
+    impl SuccessiveConditional for Emits {
+        fn transition(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn quantities(&self) -> BTreeMap<String, f64> {
+            self.0.iter().map(|name| (name.to_string(), 0.5)).collect()
+        }
+    }
+
+    /// A statistic the marginal-conditional draw produces but the
+    /// successive-conditional simulator never emits is an error naming it.
+    #[test]
+    fn a_statistic_the_sc_chain_never_emits_is_an_error() {
+        let spec = GewekeSpec {
+            n_mc: 4,
+            n_sc: 2,
+            thin: 1,
+            discard: 0,
+            alpha: 0.05,
+        };
+        let mut mc_draw = || {
+            [("a".to_string(), 0.5), ("b".to_string(), 0.5)]
+                .into_iter()
+                .collect::<BTreeMap<_, _>>()
+        };
+        let err = getting_it_right(&spec, &mut mc_draw, &mut Emits(&["a"])).unwrap_err();
+        assert_eq!(
+            err,
+            AddiVortesError::MissingStatistic {
+                statistic: "b".into()
+            }
+        );
+        let outcomes = getting_it_right(&spec, &mut mc_draw, &mut Emits(&["a", "b"])).unwrap();
+        assert_eq!(outcomes.len(), 2);
+    }
 }

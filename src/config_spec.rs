@@ -83,14 +83,11 @@ fn invalid(name: &str, reason: impl Into<String>) -> AddiVortesError {
     }
 }
 
-/// Reject a value that a shelf constructor would only `debug_assert`.
-///
-/// Several constructors (`EuclideanNormal`, `SoftmaxKernel`, `PinnedSigma`,
-/// `LinearGaussianModel`, …) check their arguments with `debug_assert!`, and
-/// `DartInclusion::new` uses a hard `assert!`. Neither is acceptable underneath
-/// a pass-through: in a release build the first silently accepts a nonsense
-/// value and the second **aborts the host process** from a bad Python dict. The
-/// spec therefore validates every scalar itself, before any constructor sees it.
+/// Reject a non-positive or non-finite scalar under the spec's own dotted
+/// field name (`scale.sigma_sq`, `coords.sigma_c`, …), so a binding's user
+/// sees the key they set rather than the constructor argument behind it. The
+/// shelf constructors check the same condition themselves; this runs first
+/// purely for the message.
 fn positive_finite(name: &str, value: f64) -> Result<f64> {
     if !value.is_finite() || value <= 0.0 {
         return Err(invalid(
@@ -246,12 +243,12 @@ impl CoordSpec {
         Ok(match *self {
             CoordSpec::EuclideanNormal { sigma_c } => Arc::new(EuclideanNormal::new(
                 positive_finite("coords.sigma_c", sigma_c)?,
-            ))
+            )?)
                 as Arc<dyn CoordinateDistribution>,
             CoordSpec::WrappedNormal { sigma_c } => Arc::new(WrappedNormal::new(positive_finite(
                 "coords.sigma_c",
                 sigma_c,
-            )?)),
+            )?)?),
         })
     }
 }
@@ -335,7 +332,7 @@ impl DistanceSpec {
                     }
                 }
                 let kinds: Vec<GowerKind> = columns.into_iter().map(GowerKind::from).collect();
-                config.with_distance(Gower::new(kinds))
+                config.with_distance(Gower::new(kinds)?)
             }
             DistanceSpec::Mahalanobis { precision } => {
                 let width = precision.len();
@@ -379,9 +376,6 @@ pub enum InclusionSpec {
 impl InclusionSpec {
     /// Everything checkable without the data: α, and the weight *values* (but
     /// not how many of them there should be).
-    ///
-    /// `DartInclusion::new` *panics* on a bad α, so this must run before it: a
-    /// pass-through may not let a bad payload abort the host process.
     fn validate(&self) -> Result<()> {
         match self {
             InclusionSpec::Uniform => Ok(()),
@@ -412,7 +406,7 @@ impl InclusionSpec {
                 }
                 config.with_inclusion(WeightedInclusion::new(weights))
             }
-            InclusionSpec::Dart { alpha } => config.with_inclusion(DartInclusion::new(alpha, p)),
+            InclusionSpec::Dart { alpha } => config.with_inclusion(DartInclusion::new(alpha, p)?),
         })
     }
 }
@@ -450,7 +444,7 @@ impl ScaleSpec {
         Ok(match self {
             ScaleSpec::Pinned { sigma_sq } => config.with_scale_model(PinnedSigma::new(
                 positive_finite("scale.sigma_sq", sigma_sq)?,
-            )),
+            )?),
             ScaleSpec::HVariance {
                 m_prime,
                 nu_prime,
@@ -459,13 +453,13 @@ impl ScaleSpec {
                 if m_prime < 1 {
                     return Err(invalid("scale.m_prime", "must be at least 1"));
                 }
-                let model = HVariance::new(m_prime);
+                let model = HVariance::new(m_prime)?;
                 let model = match (nu_prime, lambda_prime) {
                     (None, None) => model,
                     (Some(nu), Some(lambda)) => model.with_prior(
                         positive_finite("scale.nu_prime", nu)?,
                         positive_finite("scale.lambda_prime", lambda)?,
-                    ),
+                    )?,
                     // Half a prior is not a prior: pinning one part and
                     // calibrating the other would silently mix two regimes.
                     _ => {
@@ -533,7 +527,7 @@ impl BasisSpec {
                 let q = 1 + columns.len();
                 config
                     .with_cell_basis(LinearBasis::new(columns))
-                    .with_cell_model(LinearGaussianModel::new(sigma_beta_sq, q))
+                    .with_cell_model(LinearGaussianModel::new(sigma_beta_sq, q)?)
             }
         })
     }
@@ -555,7 +549,7 @@ impl MembershipSpec {
     fn apply(self, config: AddiVortesConfig) -> Result<AddiVortesConfig> {
         Ok(match self {
             MembershipSpec::Softmax { tau } => {
-                config.with_membership(SoftmaxKernel::new(positive_finite("membership.tau", tau)?))
+                config.with_membership(SoftmaxKernel::new(positive_finite("membership.tau", tau)?)?)
             }
         })
     }
@@ -949,7 +943,7 @@ mod tests {
         .unwrap();
         let by_hand = AddiVortesConfig::new(1)
             .with_cell_basis(LinearBasis::new(vec![0, 1]))
-            .with_cell_model(LinearGaussianModel::new(0.1, 3)); // q = 1 + 2
+            .with_cell_model(LinearGaussianModel::new(0.1, 3).unwrap()); // q = 1 + 2
         // `Arc::ptr_eq` semantics mean the configs are not `==`; compare the
         // observable consequence instead.
         let (x, y) = (data(), y());
@@ -974,9 +968,7 @@ mod tests {
         );
     }
 
-    /// `DartInclusion::new` *panics* on a non-positive alpha. Reaching it from a
-    /// binding payload would abort the host process, so the spec must reject the
-    /// value first — this test would abort the test runner if it regressed.
+    /// A bad DART α is an error naming the spec's own key.
     #[test]
     fn a_bad_dart_alpha_is_an_error_not_a_process_abort() {
         assert!(
@@ -987,10 +979,10 @@ mod tests {
         );
     }
 
-    /// The scalars whose constructors only `debug_assert` — in a release build
-    /// they would silently accept nonsense and produce a wrong fit.
+    /// Shelf scalars are rejected under the spec's dotted key, before the
+    /// constructor behind them reports the bare argument name.
     #[test]
-    fn scalars_that_are_only_debug_asserted_downstream_are_rejected_here() {
+    fn shelf_scalars_are_rejected_under_the_spec_key() {
         assert!(
             err(r#"{"seed": 1, "membership": {"type": "softmax", "tau": 0.0}}"#).contains("tau")
         );

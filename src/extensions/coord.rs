@@ -38,3 +38,26 @@ pub(crate) fn wrap_to_pi(x: f64) -> f64 {
     // Rounding at the seam can land just outside; clamp back to the closed domain.
     wrapped.clamp(-std::f64::consts::PI, std::f64::consts::PI)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::error::AddiVortesError;
+
+    /// Both shelf laws check σ_c in every build profile.
+    #[test]
+    fn coordinate_laws_reject_a_bad_sigma_c() {
+        for bad in [0.0, -0.8, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                EuclideanNormal::new(bad),
+                Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "sigma_c"
+            ));
+            assert!(matches!(
+                WrappedNormal::new(bad),
+                Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "sigma_c"
+            ));
+        }
+        assert!(EuclideanNormal::new(0.8).is_ok());
+        assert!(WrappedNormal::new(0.8).is_ok());
+    }
+}

@@ -5,6 +5,7 @@
 //! per-cell diagonal statistics: soft membership needs the joint
 //! within-tessellation draw of the dense path.
 
+use crate::engine::error::{Result, require_positive_finite};
 use crate::extensions::cell_model::{CellModel, CellStats, gaussian_marginal_terms, mu_posterior};
 
 /// The precision-weighted Gaussian statistic: weighted count `Σ wᵢ` and
@@ -64,10 +65,13 @@ pub struct WeightedGaussianModel {
 
 impl WeightedGaussianModel {
     /// A weighted Gaussian cell model with prior cell-value variance σ_μ²
-    /// (scaled space).
-    pub fn new(sigma_mu_sq: f64) -> Self {
-        debug_assert!(sigma_mu_sq > 0.0);
-        Self { sigma_mu_sq }
+    /// (scaled space). Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless `sigma_mu_sq` is finite and strictly positive.
+    pub fn new(sigma_mu_sq: f64) -> Result<Self> {
+        Ok(Self {
+            sigma_mu_sq: require_positive_finite("sigma_mu_sq", sigma_mu_sq)?,
+        })
     }
 }
 

@@ -3,6 +3,7 @@
 //! temperature τ: the first kernel of the deterministic-weights family, not
 //! an endorsed formulation.
 
+use crate::engine::error::{Result, require_positive_finite};
 use crate::engine::mathsfn;
 use crate::extensions::membership::MembershipKernel;
 
@@ -17,11 +18,14 @@ pub struct SoftmaxKernel {
 }
 
 impl SoftmaxKernel {
-    /// A softmax kernel with fixed temperature `tau` (> 0, scaled-space
-    /// squared-distance units).
-    pub fn new(tau: f64) -> Self {
-        debug_assert!(tau.is_finite() && tau > 0.0);
-        Self { tau }
+    /// A softmax kernel with fixed temperature `tau` (scaled-space
+    /// squared-distance units). Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless `tau` is finite and strictly positive.
+    pub fn new(tau: f64) -> Result<Self> {
+        Ok(Self {
+            tau: require_positive_finite("tau", tau)?,
+        })
     }
 
     /// The fixed temperature τ (scaled-space squared-distance units).
@@ -47,7 +51,7 @@ mod tests {
 
     #[test]
     fn softmax_weights_match_hand_values_and_are_shift_stable() {
-        let kernel = SoftmaxKernel::new(0.5);
+        let kernel = SoftmaxKernel::new(0.5).unwrap();
         let mut weights = [0.0_f64; 3];
         kernel.weights(&[0.2, 0.7, 0.2], &mut weights);
         // Best key 0.2 → weights exp(0), exp(−1), exp(0).
@@ -67,8 +71,18 @@ mod tests {
     }
 
     #[test]
+    fn softmax_rejects_a_bad_temperature() {
+        for bad in [0.0, -0.5, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                SoftmaxKernel::new(bad),
+                Err(crate::AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "tau"
+            ));
+        }
+    }
+
+    #[test]
     fn small_tau_approaches_the_hard_assignment() {
-        let kernel = SoftmaxKernel::new(1e-6);
+        let kernel = SoftmaxKernel::new(1e-6).unwrap();
         let mut weights = [0.0_f64; 3];
         kernel.weights(&[0.3, 0.1, 0.5], &mut weights);
         let total: f64 = weights.iter().sum();

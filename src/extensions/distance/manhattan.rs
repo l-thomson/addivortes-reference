@@ -44,7 +44,7 @@ mod tests {
     fn matches_all_numeric_gower_bit_for_bit() {
         // Same arithmetic in the same order (Gower's numeric weight is 1.0,
         // and 1.0 * x == x exactly): identical bits, not just close.
-        let gower = Gower::new(vec![GowerKind::Numeric; 4]);
+        let gower = Gower::new(vec![GowerKind::Numeric; 4]).unwrap();
         let x = [0.13, -0.7, 2.5, 0.01];
         let c = [1.9, 0.4, -0.3, 0.02];
         let dims = [0usize, 2, 3];
