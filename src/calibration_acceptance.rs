@@ -1,9 +1,8 @@
-//! Every model skeleton passes the public Geweke battery as acceptance
-//! tests. Each compiles
-//! against the public surface only (`calibration::*`, `Sampler::pinned_prior`,
-//! the config seams) with zero engine edits and no crate internals. The
-//! in-crate `stat_gates` batteries remain the fine-grained per-point gates;
-//! this file proves the same verdicts are reachable from the outside.
+//! Every model skeleton passes the Geweke battery as acceptance tests. Each
+//! composes through the crate-internal wiring surface (`calibration::*`,
+//! `SamplerBuilder`, `pinned_prior`) with zero engine edits. The in-crate
+//! `stat_gates` batteries remain the fine-grained per-point gates; this
+//! file proves the same verdicts are reachable from the model-file seam.
 //!
 //! The skeletons: the paper Gaussian
 //! (the default model), the Binary-probit response family, H-AddiVortes
@@ -19,15 +18,17 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use addivortes::basis::{CellBasis, LinearBasis, LinearGaussianModel};
-use addivortes::calibration::{GewekeOutcome, GewekeSpec, StructuralPrior, SuccessiveConditional};
-use addivortes::cell_model::WeightedGaussianModel;
-use addivortes::scale::{GlobalSigma, HVariance, ScaleCtx, ScaleModel};
-use addivortes::{
-    AddiVortesConfig, CellAssigner, ColumnMetrics, CoordinateDistribution, DartInclusion, Data,
-    EuclideanNormal, MembershipKernel, Metric, MoveSetBuilder, ResponseFamily, Sampler,
-    SoftmaxKernel, Tessellation, mathsfn,
-};
+use crate::calibration::{GewekeOutcome, GewekeSpec, StructuralPrior, SuccessiveConditional};
+use crate::engine::builder::SamplerBuilder;
+use crate::extensions::basis::{CellBasis, LinearBasis, LinearGaussianModel};
+use crate::extensions::cell_model::WeightedGaussianModel;
+use crate::extensions::coord::{CoordinateDistribution, EuclideanNormal};
+use crate::extensions::distance::{CellAssigner, ColumnMetrics};
+use crate::extensions::inclusion::DartInclusion;
+use crate::extensions::membership::{MembershipKernel, SoftmaxKernel};
+use crate::extensions::moves::MoveSetBuilder;
+use crate::extensions::scale::{GlobalSigma, HVariance, ScaleCtx, ScaleModel};
+use crate::{AddiVortesConfig, Data, Metric, ResponseFamily, Sampler, Tessellation, mathsfn};
 use rand_chacha::ChaCha8Rng;
 use rand_core::{Rng, SeedableRng};
 use rand_distr::Distribution;
@@ -114,9 +115,7 @@ fn basis_design(seed: u64) -> Data {
 
 fn coord_laws() -> Vec<Arc<dyn CoordinateDistribution>> {
     (0..P)
-        .map(|_| {
-            Arc::new(EuclideanNormal::new(SIGMA_C).unwrap()) as Arc<dyn CoordinateDistribution>
-        })
+        .map(|_| Arc::new(EuclideanNormal::new(SIGMA_C).unwrap()) as Arc<dyn CoordinateDistribution>)
         .collect()
 }
 
@@ -227,18 +226,23 @@ fn base_config(seed: u64) -> AddiVortesConfig {
         .with_k(K)
 }
 
-fn pinned_sampler(config: AddiVortesConfig, x: &Data, y0: Vec<f64>) -> Sampler {
-    Sampler::pinned_prior(
-        config,
-        x.clone(),
-        vec![Metric::Euclidean; P],
-        y0,
-        LAMBDA,
-        MoveSetBuilder::stone_gosling()
-            .build()
-            .expect("the paper set builds"),
-    )
-    .expect("pinned-prior construction succeeds")
+fn pinned_sampler(builder: SamplerBuilder, x: &Data, y0: Vec<f64>) -> Sampler {
+    builder
+        .pinned_prior(
+            x.clone(),
+            vec![Metric::Euclidean; P],
+            y0,
+            LAMBDA,
+            MoveSetBuilder::stone_gosling()
+                .build()
+                .expect("the paper set builds"),
+        )
+        .expect("pinned-prior construction succeeds")
+}
+
+/// `base_config` wrapped for component wiring.
+fn base_builder(seed: u64) -> SamplerBuilder {
+    SamplerBuilder::new(base_config(seed))
 }
 
 /// An arbitrary (non-stationary) starting response; the SC chain earns
@@ -267,7 +271,7 @@ struct GaussianSc {
 }
 
 impl SuccessiveConditional for GaussianSc {
-    fn transition(&mut self) -> addivortes::Result<()> {
+    fn transition(&mut self) -> crate::Result<()> {
         let fit = self.sampler.fitted_values();
         let sigma = self.sigma_sq.sqrt();
         self.y = fit
@@ -344,7 +348,7 @@ fn assert_green(name: &str, outcomes: &[GewekeOutcome]) {
 fn run_scalar_gaussian_battery(
     seed: u64,
     t_df: Option<f64>,
-    configure: impl FnOnce(AddiVortesConfig) -> AddiVortesConfig,
+    configure: impl FnOnce(SamplerBuilder) -> SamplerBuilder,
 ) -> Vec<GewekeOutcome> {
     let x = design(seed);
     let assigner = ColumnMetrics::new(vec![Metric::Euclidean; P]);
@@ -388,7 +392,7 @@ fn run_scalar_gaussian_battery(
 
     let mut sc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C);
     let sigma_sq0 = draw_inv_chi_sq(NU, LAMBDA, &mut sc_rng);
-    let sampler = pinned_sampler(configure(base_config(seed ^ 0xC4A1)), &x, y_init());
+    let sampler = pinned_sampler(configure(base_builder(seed ^ 0xC4A1)), &x, y_init());
     let mut sc = GaussianSc {
         sampler,
         rng: sc_rng,
@@ -398,7 +402,7 @@ fn run_scalar_gaussian_battery(
         t_df,
         latest: BTreeMap::new(),
     };
-    addivortes::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
+    crate::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
         .expect("standard-path sweeps cannot fail")
 }
 
@@ -532,10 +536,10 @@ fn run_basis_battery_inner(seed: u64, use_basis: bool) -> Vec<GewekeOutcome> {
 
     let mut sc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C);
     let sigma_sq0 = draw_inv_chi_sq(NU, LAMBDA, &mut sc_rng);
-    let config = base_config(seed ^ 0xC4A1)
+    let builder = base_builder(seed ^ 0xC4A1)
         .with_cell_model(LinearGaussianModel::new(sigma_mu_sq(), q).unwrap())
         .with_cell_basis(LinearBasis::new(vec![0]));
-    let sampler = pinned_sampler(config, &x, y_init());
+    let sampler = pinned_sampler(builder, &x, y_init());
     let mut sc = GaussianSc {
         sampler,
         rng: sc_rng,
@@ -545,7 +549,7 @@ fn run_basis_battery_inner(seed: u64, use_basis: bool) -> Vec<GewekeOutcome> {
         t_df: None,
         latest: BTreeMap::new(),
     };
-    addivortes::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
+    crate::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
         .expect("basis-path sweeps cannot fail")
 }
 
@@ -668,9 +672,8 @@ fn dart_mh_correction_passes_the_externalised_battery() {
 
     let mut sc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C);
     let sigma_sq0 = draw_inv_chi_sq(NU, LAMBDA, &mut sc_rng);
-    let config =
-        base_config(seed ^ 0xC4A1).with_inclusion(DartInclusion::new(DART_ALPHA, P).unwrap());
-    let sampler = pinned_sampler(config, &x, y_init());
+    let builder = base_builder(seed ^ 0xC4A1).with_inclusion(DartInclusion::new(DART_ALPHA, P).unwrap());
+    let sampler = pinned_sampler(builder, &x, y_init());
     let mut sc = GaussianSc {
         sampler,
         rng: sc_rng,
@@ -680,7 +683,7 @@ fn dart_mh_correction_passes_the_externalised_battery() {
         t_df: None,
         latest: BTreeMap::new(),
     };
-    let outcomes = addivortes::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
+    let outcomes = crate::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
         .expect("DART sweeps cannot fail");
     assert_green("dart-mh", &outcomes);
 }
@@ -793,8 +796,8 @@ fn soft_membership_passes_the_externalised_battery() {
 
     let mut sc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C);
     let sigma_sq0 = draw_inv_chi_sq(NU, LAMBDA, &mut sc_rng);
-    let config = base_config(seed ^ 0xC4A1).with_membership(SoftmaxKernel::new(TAU).unwrap());
-    let sampler = pinned_sampler(config, &x, y_init());
+    let builder = base_builder(seed ^ 0xC4A1).with_membership(SoftmaxKernel::new(TAU).unwrap());
+    let sampler = pinned_sampler(builder, &x, y_init());
     let mut sc = GaussianSc {
         sampler,
         rng: sc_rng,
@@ -804,7 +807,7 @@ fn soft_membership_passes_the_externalised_battery() {
         t_df: None,
         latest: BTreeMap::new(),
     };
-    let outcomes = addivortes::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
+    let outcomes = crate::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
         .expect("dense-path sweeps cannot fail");
     assert_green("soft-membership", &outcomes);
 }
@@ -848,7 +851,7 @@ fn probit_quantities(
 }
 
 impl SuccessiveConditional for ProbitSc {
-    fn transition(&mut self) -> addivortes::Result<()> {
+    fn transition(&mut self) -> crate::Result<()> {
         let fit = self.sampler.fitted_values();
         self.y = fit
             .iter()
@@ -922,16 +925,18 @@ fn binary_probit_family_passes_the_externalised_battery() {
         probit_quantities(&tessellations, &fit, &y)
     };
 
-    let config = base_config(seed ^ 0xC4A1).with_response_family(ResponseFamily::BinaryProbit);
+    let builder = SamplerBuilder::new(
+        base_config(seed ^ 0xC4A1).with_response_family(ResponseFamily::BinaryProbit),
+    );
     let y0: Vec<f64> = (0..N).map(|i| if i % 2 == 0 { 1.0 } else { 0.0 }).collect();
-    let sampler = pinned_sampler(config, &x, y0.clone());
+    let sampler = pinned_sampler(builder, &x, y0.clone());
     let mut sc = ProbitSc {
         sampler,
         rng: ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C),
         y: y0,
         latest: BTreeMap::new(),
     };
-    let outcomes = addivortes::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
+    let outcomes = crate::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
         .expect("probit sweeps cannot fail");
     assert_green("binary-probit-family", &outcomes);
 }
@@ -951,7 +956,7 @@ struct SharedHVariance {
 }
 
 impl ScaleModel for SharedHVariance {
-    type Error = addivortes::AddiVortesError;
+    type Error = crate::AddiVortesError;
 
     fn update(
         &mut self,
@@ -1030,7 +1035,7 @@ struct HSc {
 }
 
 impl SuccessiveConditional for HSc {
-    fn transition(&mut self) -> addivortes::Result<()> {
+    fn transition(&mut self) -> crate::Result<()> {
         let fit = self.sampler.fitted_values();
         {
             let inner = self.shared.lock().expect("test lock");
@@ -1130,15 +1135,15 @@ fn h_addivortes_passes_the_externalised_battery() {
     // The H sampler: weighted-Gaussian mean cells (the per-observation
     // precisions demand the weighted statistic) + the shared variance
     // ensemble on the ScaleModel seam.
-    let config = base_config(seed ^ 0xC4A1)
-        .with_cell_model(WeightedGaussianModel::new(sigma_mu_sq()).unwrap());
+    let builder =
+        base_builder(seed ^ 0xC4A1).with_cell_model(WeightedGaussianModel::new(sigma_mu_sq()).unwrap());
     let shared = Arc::new(Mutex::new(
         HVariance::new(M_PRIME)
             .unwrap()
             .with_prior(NU_PRIME, LAMBDA_PRIME)
             .unwrap(),
     ));
-    let mut sampler = pinned_sampler(config, &x, y_init()).with_scale_model(SharedHVariance {
+    let mut sampler = pinned_sampler(builder, &x, y_init()).with_scale_model(SharedHVariance {
         inner: Arc::clone(&shared),
         cache: Vec::new(),
     });
@@ -1152,7 +1157,7 @@ fn h_addivortes_passes_the_externalised_battery() {
         y: y_init(),
         latest: BTreeMap::new(),
     };
-    let outcomes = addivortes::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
+    let outcomes = crate::calibration::getting_it_right(&spec(), &mut mc_draw, &mut sc)
         .expect("H sweeps cannot fail");
     assert_green("h-addivortes", &outcomes);
 }
@@ -1162,10 +1167,10 @@ fn h_addivortes_passes_the_externalised_battery() {
 #[test]
 fn the_basis_leg_sampler_actually_carries_a_q2_payload() {
     let x = basis_design(0xACC0_0009);
-    let config = base_config(1)
+    let builder = base_builder(1)
         .with_cell_model(LinearGaussianModel::new(sigma_mu_sq(), 2).unwrap())
         .with_cell_basis(LinearBasis::new(vec![0]));
-    let mut sampler = pinned_sampler(config, &x, y_init());
+    let mut sampler = pinned_sampler(builder, &x, y_init());
     let draw = sampler.step().expect("a basis sweep runs");
     for tessellation in draw.tessellations {
         assert_eq!(

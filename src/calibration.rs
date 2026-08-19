@@ -320,7 +320,7 @@ pub struct StructuralPrior<'a> {
     pub omega: f64,
     /// Per-encoded-column coordinate laws, the same laws
     /// the sampler under test runs.
-    pub coord_dists: &'a [std::sync::Arc<dyn crate::CoordinateDistribution>],
+    pub coord_dists: &'a [std::sync::Arc<dyn crate::extensions::coord::CoordinateDistribution>],
     /// Per-encoded-column inclusion weights (strictly
     /// positive relative weights; all-1 is the uniform subset prior).
     pub weights: &'a [f64],

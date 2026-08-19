@@ -7,3 +7,6 @@
 #![allow(dead_code)]
 
 pub(crate) mod binary;
+pub(crate) mod gaussian;
+pub(crate) mod h;
+pub(crate) mod soft;

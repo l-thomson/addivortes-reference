@@ -373,14 +373,16 @@ mod tests {
             })
             .collect();
 
-        AddiVortesConfig::new(1)
-            .with_m(2)
-            .with_omega(1.0)
-            .with_burn_in(2)
-            .with_draws(2)
-            .with_scale_model(HVariance::new(5).unwrap())
-            .fit(&x, &y)
-            .expect("a heteroscedastic scale model fits on its own");
+        crate::engine::builder::SamplerBuilder::new(
+            AddiVortesConfig::new(1)
+                .with_m(2)
+                .with_omega(1.0)
+                .with_burn_in(2)
+                .with_draws(2),
+        )
+        .with_scale_model(HVariance::new(5).unwrap())
+        .fit(&x, &y)
+        .expect("a heteroscedastic scale model fits on its own");
     }
 
     /// A response with no residual variation (an exact linear function of
@@ -393,14 +395,16 @@ mod tests {
         let xs: Vec<f64> = (0..n).map(|i| i as f64 / (n - 1) as f64).collect();
         let ys: Vec<f64> = xs.iter().map(|&v| 2.0 * v).collect();
         let x = Data::new(xs, n, 1).unwrap();
-        let err = AddiVortesConfig::new(7)
-            .with_m(5)
-            .with_omega(0.5)
-            .with_burn_in(5)
-            .with_draws(5)
-            .with_scale_model(HVariance::new(10).unwrap())
-            .fit(&x, &ys)
-            .unwrap_err();
+        let err = crate::engine::builder::SamplerBuilder::new(
+            AddiVortesConfig::new(7)
+                .with_m(5)
+                .with_omega(0.5)
+                .with_burn_in(5)
+                .with_draws(5),
+        )
+        .with_scale_model(HVariance::new(10).unwrap())
+        .fit(&x, &ys)
+        .unwrap_err();
         assert_eq!(err, AddiVortesError::DegenerateResidual {});
     }
 

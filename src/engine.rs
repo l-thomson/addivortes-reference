@@ -8,6 +8,7 @@
 //! The module is private: its public types are re-exported from the crate root.
 
 pub mod backfit;
+pub mod builder;
 pub mod column;
 pub mod config;
 pub mod data;

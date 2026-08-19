@@ -72,7 +72,7 @@ jobs:
             'test(/^stat_gates::(sbc_ranks|geweke|pure_prior)/)' \
             'test(/^stat_gates::battery_public_driver/)' \
             'test(/^extensions::inclusion::dart::tests::isolated_update/)' \
-            'binary(calibration_acceptance)'
+            'test(/^calibration_acceptance::/)'
           do
             echo "::group::${selector}"
             if ! cargo +1.85.1 nextest run --locked --cargo-profile determinism \

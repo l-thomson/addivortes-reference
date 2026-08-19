@@ -34,6 +34,7 @@
 
 mod linear;
 
+#[allow(unused_imports)]
 pub use linear::{LinearCellStats, LinearGaussianModel};
 
 /// The cell-basis point: what the per-observation basis row z(x) is.

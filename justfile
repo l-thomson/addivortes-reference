@@ -67,7 +67,7 @@ calibration:
     cargo nextest run --locked --cargo-profile determinism --run-ignored ignored-only \
         --no-fail-fast --no-tests fail -E 'test(/^stat_gates::battery_public_driver/)'
     cargo nextest run --locked --cargo-profile determinism --run-ignored ignored-only \
-        --no-fail-fast --no-tests fail -E 'binary(calibration_acceptance)'
+        --no-fail-fast --no-tests fail -E 'test(/^calibration_acceptance::/)'
 
 # Rung 4, interval coverage: Friedman n=150 p=10 at the paper defaults, score
 # test of H0: coverage = 0.90. Coverage of the credible intervals, not code

@@ -9,8 +9,9 @@ use crate::engine::error::{AddiVortesError, Result};
 use crate::engine::sampler::{Draw, Sampler};
 use crate::engine::scaler::FittedScaler;
 use crate::engine::tessellation::Tessellation;
+use crate::extensions::basis::CellBasis;
 use crate::extensions::distance::CellAssigner;
-use crate::extensions::moves::MoveSet;
+use crate::extensions::membership::MembershipKernel;
 
 /// Pure container of **scaled-space** posterior draws: no
 /// X-taking methods; every numeric accessor is in the sampler's scaled
@@ -227,12 +228,9 @@ pub enum ResponseFamily {
     /// Robust regression with Student-t errors (the scale-mixture
     /// augmentation): identity link, predictions on the **response scale**,
     /// predictive distribution fitᵈ + σᵈ·t_ν′ per draw. Fit-side the family
-    /// assembles [`RobustTStep`](crate::extensions::response::RobustTStep), the
-    /// weight-aware mean family
-    /// ([`WeightedGaussianModel`](crate::extensions::cell_model::WeightedGaussianModel))
-    /// and the precision-weighted σ² draw
-    /// ([`WeightedGlobalSigma`](crate::extensions::scale::WeightedGlobalSigma));
-    /// explicit seam choices override per component, as everywhere.
+    /// assembles the Student-t augmentation step, the weight-aware mean
+    /// family and the precision-weighted σ² draw together (the
+    /// crate-internal pairing rule).
     RobustT {
         /// Error degrees of freedom ν′ (a dimensionless count; must be
         /// finite and strictly positive; validated at fit and at load).
@@ -266,6 +264,12 @@ pub struct FittedAddiVortes {
     scaler: FittedScaler,
     config: AddiVortesConfig,
     assigner: Arc<dyn CellAssigner>,
+    /// Soft-membership kernel; `None` = hard assignment at predict.
+    membership: Option<Arc<dyn MembershipKernel>>,
+    /// Cell basis; `None` = scalar cell payloads at predict.
+    basis: Option<Arc<dyn CellBasis>>,
+    /// True when any component axis was set explicitly at fit.
+    custom_components: bool,
     warnings: Vec<Warning>,
     in_sample_rmse: f64,
 }
@@ -564,13 +568,13 @@ impl FittedAddiVortes {
         for draw in self.posterior.iter_draws() {
             let mut sums = vec![0.0_f64; n];
             for tessellation in draw.tessellations {
-                match &self.config.membership {
+                match &self.membership {
                     // Hard membership: nearest-centre assignment. The cell's
                     // contribution is its scalar μ, or the basis inner product
                     // z(xᵢ)·β_k when a cell basis is configured.
                     None => {
                         let assignment = self.assigner.assign_cells(&x_enc, tessellation)?;
-                        match &self.config.basis {
+                        match &self.basis {
                             None => {
                                 for (sum, &cell) in sums.iter_mut().zip(&assignment) {
                                     *sum += tessellation.mus()[cell];
@@ -908,21 +912,8 @@ pub(crate) fn fit(config: AddiVortesConfig, x: &Data, y: &[f64]) -> Result<Fitte
     fit_sampler(sampler, x, y)
 }
 
-/// `fit` with a caller-supplied move set (overrides any set on the
-/// config; last wins).
-pub(crate) fn fit_with_move_set(
-    config: AddiVortesConfig,
-    x: &Data,
-    y: &[f64],
-    move_set: MoveSet,
-) -> Result<FittedAddiVortes> {
-    config.validate()?;
-    let sampler = Sampler::with_move_set(config, x, y, move_set)?;
-    fit_sampler(sampler, x, y)
-}
-
 /// The shared burn-in/thinning collection loop over a constructed sampler.
-fn fit_sampler(mut sampler: Sampler, x: &Data, y: &[f64]) -> Result<FittedAddiVortes> {
+pub(crate) fn fit_sampler(mut sampler: Sampler, x: &Data, y: &[f64]) -> Result<FittedAddiVortes> {
     for _ in 0..sampler.config().burn_in {
         sampler.step()?;
     }
@@ -978,14 +969,17 @@ impl FittedAddiVortes {
             });
         }
         let posterior = PosteriorSamples { sigma_sqs, draws };
-        let (config, scaler, warnings, assigner) = sampler.into_fitted_parts();
+        let parts = sampler.into_fitted_parts();
 
         let mut model = FittedAddiVortes {
             posterior,
-            scaler,
-            config,
-            assigner,
-            warnings,
+            scaler: parts.scaler,
+            config: parts.config,
+            assigner: parts.assigner,
+            membership: parts.membership,
+            basis: parts.basis,
+            custom_components: parts.custom_components,
+            warnings: parts.warnings,
             in_sample_rmse: 0.0,
         };
         // Response-scale RMSE of the posterior mean on the training data.
@@ -1069,35 +1063,14 @@ mod persist {
                 thinning,
                 metrics,
                 family,
-                move_set,
-                coords,
-                assigner,
-                membership,
-                inclusion,
-                cell_model,
-                basis,
-                response_model,
-                scale_model,
-                count_priors,
                 cell_prior_sd,
             } = &self.config;
 
             // Not portable: an arbitrary trait object has no serialisable form.
-            // The cell-prior dial is refused on the same channel: it is a
-            // crate-internal fit-side hook only a model file can set, and a
-            // model carrying it is that model file's product, rebuilt in code
-            // rather than loaded through the public loader.
-            let has_custom_extension = cell_prior_sd.is_some()
-                || move_set.is_some()
-                || coords.is_some()
-                || assigner.is_some()
-                || inclusion.is_some()
-                || cell_model.is_some()
-                || response_model.is_some()
-                || scale_model.is_some()
-                || membership.is_some()
-                || count_priors.is_some()
-                || basis.is_some();
+            // The component flag travels on the fitted model itself; the
+            // cell-prior dial is refused on the same channel (a crate-internal
+            // fit-side hook only a model file can set).
+            let has_custom_extension = self.custom_components || cell_prior_sd.is_some();
             if has_custom_extension {
                 return Err(serde::ser::Error::custom(
                     "a model fitted with custom extension points cannot be serialised \
@@ -1241,6 +1214,10 @@ mod persist {
             scaler: saved.scaler,
             config,
             assigner,
+            // Only default-component models serialise, so all three reset.
+            membership: None,
+            basis: None,
+            custom_components: false,
             warnings: saved.warnings,
             in_sample_rmse: saved.in_sample_rmse,
         })
@@ -1597,21 +1574,28 @@ mod tests {
 
     #[test]
     fn inclusion_weight_validation_and_expansion() {
+        use crate::engine::builder::SamplerBuilder;
         use crate::extensions::inclusion::WeightedInclusion;
-        let mut config = quick_config().with_omega(1.5);
-        // Non-positive weight → InvalidHyperparameter at validate().
-        config.inclusion = Some(Arc::new(WeightedInclusion::new(vec![1.0, 0.0])));
-        let err = config.clone().validate().unwrap_err();
+        let config = || quick_config().with_omega(1.5);
+        let x2 = Data::from_rows(&[[0.0, 1.0], [0.4, 0.2], [1.0, 0.6], [0.7, 0.9]]).unwrap();
+        let y2 = vec![1.0, 2.0, 3.0, 4.0];
+
+        // Non-positive weight: InvalidHyperparameter at the fit boundary
+        // (the first place the model meets the engine).
+        let err = SamplerBuilder::new(config())
+            .with_inclusion(WeightedInclusion::new(vec![1.0, 0.0]))
+            .fit(&x2, &y2)
+            .unwrap_err();
         assert!(matches!(
             err,
             AddiVortesError::InvalidHyperparameter { ref name, .. } if name == "inclusion_weights"
         ));
 
-        // Wrong length → InvalidHyperparameter at the fit boundary.
-        let x2 = Data::from_rows(&[[0.0, 1.0], [0.4, 0.2], [1.0, 0.6], [0.7, 0.9]]).unwrap();
-        let y2 = vec![1.0, 2.0, 3.0, 4.0];
-        config.inclusion = Some(Arc::new(WeightedInclusion::new(vec![1.0, 2.0, 3.0])));
-        let err = config.clone().fit(&x2, &y2).unwrap_err();
+        // Wrong length: InvalidHyperparameter at the fit boundary.
+        let err = SamplerBuilder::new(config())
+            .with_inclusion(WeightedInclusion::new(vec![1.0, 2.0, 3.0]))
+            .fit(&x2, &y2)
+            .unwrap_err();
         assert!(matches!(
             err,
             AddiVortesError::InvalidHyperparameter { ref name, .. } if name == "inclusion_weights"
@@ -1629,11 +1613,12 @@ mod tests {
         ])
         .unwrap();
         let yc = vec![0.1, 1.0, 0.4, 1.3, 0.8, 0.2];
-        config.inclusion = Some(Arc::new(WeightedInclusion::new(vec![1.0, 4.0])));
-        let model = config
-            .with_metrics(vec![Metric::Euclidean, Metric::Categorical])
-            .fit(&xc, &yc)
-            .unwrap();
+        let model = SamplerBuilder::new(
+            config().with_metrics(vec![Metric::Euclidean, Metric::Categorical]),
+        )
+        .with_inclusion(WeightedInclusion::new(vec![1.0, 4.0]))
+        .fit(&xc, &yc)
+        .unwrap();
         assert_eq!(model.scaler().n_encoded_cols(), 4); // 1 + 3 one-hot
     }
 
@@ -2060,40 +2045,39 @@ mod tests {
                 }
             }
 
+            use crate::engine::builder::SamplerBuilder;
             let (x, y) = training_data();
-            let cases: Vec<(&str, AddiVortesConfig)> = vec![
+            let builder = || SamplerBuilder::new(quick_config());
+            let cases: Vec<(&str, SamplerBuilder)> = vec![
                 (
                     "move_set",
-                    quick_config().with_move_set(MoveSetBuilder::stone_gosling().build().unwrap()),
+                    builder().with_move_set(MoveSetBuilder::stone_gosling().build().unwrap()),
                 ),
                 (
                     "coords",
-                    quick_config().with_coords(vec![Arc::new(EuclideanNormal::new(0.8).unwrap())]),
+                    builder().with_coords(vec![Arc::new(EuclideanNormal::new(0.8).unwrap())]),
                 ),
-                ("assigner", quick_config().with_distance(Manhattan)),
+                ("assigner", builder().with_distance(Manhattan)),
                 (
                     "inclusion",
-                    quick_config().with_inclusion(UniformInclusion::new(1)),
+                    builder().with_inclusion(UniformInclusion::new(1)),
                 ),
                 (
                     "cell_model",
-                    quick_config().with_cell_model(GaussianCellModel::new(0.01).unwrap()),
+                    builder().with_cell_model(GaussianCellModel::new(0.01).unwrap()),
                 ),
-                (
-                    "response_model",
-                    quick_config().with_response_model(NoOpStep),
-                ),
+                ("response_model", builder().with_response_model(NoOpStep)),
                 (
                     "scale_model",
-                    quick_config().with_scale_model(PinnedSigma::unit()),
+                    builder().with_scale_model(PinnedSigma::unit()),
                 ),
                 (
                     "membership",
-                    quick_config().with_membership(SoftmaxKernel::new(0.1).unwrap()),
+                    builder().with_membership(SoftmaxKernel::new(0.1).unwrap()),
                 ),
                 (
                     "count_priors",
-                    quick_config().with_count_priors(ShiftedPoissonBinomial),
+                    builder().with_count_priors(ShiftedPoissonBinomial),
                 ),
             ];
 
@@ -2101,8 +2085,8 @@ mod tests {
             let plain = quick_config().fit(&x, &y).unwrap();
             serde_json::to_string(&plain).expect("a default-component model still serialises");
 
-            for (component, config) in cases {
-                let model = config
+            for (component, builder) in cases {
+                let model = builder
                     .fit(&x, &y)
                     .unwrap_or_else(|e| panic!("{component}: {e}"));
                 match serde_json::to_string(&model) {
@@ -2158,22 +2142,11 @@ mod tests {
     }
 
     #[test]
-    fn config_partial_eq_uses_pointer_identity_for_components() {
+    fn config_partial_eq_is_plain_value_equality() {
         let a = AddiVortesConfig::new(5).with_m(3);
         let b = AddiVortesConfig::new(5).with_m(3);
         assert_eq!(a, b);
         assert_ne!(a, b.clone().with_m(4));
-
-        use crate::extensions::inclusion::WeightedInclusion;
-        let model = Arc::new(WeightedInclusion::new(vec![1.0]));
-        let mut with_inclusion_1 = a.clone();
-        with_inclusion_1.inclusion = Some(model.clone());
-        let mut with_inclusion_2 = a.clone();
-        with_inclusion_2.inclusion = Some(model);
-        assert_eq!(with_inclusion_1, with_inclusion_2); // same Arc
-        let mut with_other = a.clone();
-        with_other.inclusion = Some(Arc::new(WeightedInclusion::new(vec![1.0])));
-        assert_ne!(with_inclusion_1, with_other); // equal value, different Arc
-        assert_ne!(with_inclusion_1, a); // Some vs None
+        assert_ne!(a, b.with_cell_prior_sd(0.2));
     }
 }

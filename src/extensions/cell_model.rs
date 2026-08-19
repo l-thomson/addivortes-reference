@@ -42,8 +42,11 @@ mod gaussian;
 mod inv_chi_sq;
 mod weighted_gaussian;
 
+#[allow(unused_imports)]
 pub use gaussian::{GaussianCellModel, GaussianCellStats};
+#[allow(unused_imports)]
 pub use inv_chi_sq::{InvChiSqCellModel, InvChiSqStats};
+#[allow(unused_imports)]
 pub use weighted_gaussian::{WeightedGaussianModel, WeightedGaussianStats};
 
 use crate::engine::mathsfn;

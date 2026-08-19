@@ -236,14 +236,16 @@ mod tests {
             y.push(3.0 * a);
         }
         let x = crate::engine::data::Data::from_rows(&rows).unwrap();
-        let model = crate::AddiVortesConfig::new(42)
-            .with_m(10)
-            .with_burn_in(20)
-            .with_draws(30)
-            .with_omega(1.5)
-            .with_distance(Mahalanobis::new(vec![2.0, -0.5, -0.5, 1.0], 2).unwrap())
-            .fit(&x, &y)
-            .unwrap();
+        let model = crate::engine::builder::SamplerBuilder::new(
+            crate::AddiVortesConfig::new(42)
+                .with_m(10)
+                .with_burn_in(20)
+                .with_draws(30)
+                .with_omega(1.5),
+        )
+        .with_distance(Mahalanobis::new(vec![2.0, -0.5, -0.5, 1.0], 2).unwrap())
+        .fit(&x, &y)
+        .unwrap();
         let predictions = model.predict(&x).unwrap();
         assert!(predictions.iter().all(|p| p.is_finite()));
         assert!(
@@ -265,14 +267,16 @@ mod tests {
             y.push(i as f64);
         }
         let x = crate::engine::data::Data::from_rows(&rows).unwrap();
-        let err = crate::AddiVortesConfig::new(7)
-            .with_m(5)
-            .with_burn_in(5)
-            .with_draws(5)
-            .with_omega(1.5)
-            .with_distance(Mahalanobis::new(identity(3), 3).unwrap())
-            .fit(&x, &y)
-            .unwrap_err();
+        let err = crate::engine::builder::SamplerBuilder::new(
+            crate::AddiVortesConfig::new(7)
+                .with_m(5)
+                .with_burn_in(5)
+                .with_draws(5)
+                .with_omega(1.5),
+        )
+        .with_distance(Mahalanobis::new(identity(3), 3).unwrap())
+        .fit(&x, &y)
+        .unwrap_err();
         assert!(matches!(
             err,
             crate::engine::error::AddiVortesError::NonFiniteDistance { .. }

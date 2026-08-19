@@ -23,19 +23,23 @@ use rand_core::SeedableRng;
 
 use crate::Metric;
 use crate::engine::backfit::{Composition, EnsembleUnit};
+use crate::engine::builder::Components;
 use crate::engine::column::semantics_for;
 use crate::engine::config::AddiVortesConfig;
 use crate::engine::data::{self, Data, Warning};
 use crate::engine::error::{AddiVortesError, Result};
 use crate::engine::scaler::{self, FittedScaler};
 use crate::engine::tessellation::Tessellation;
+use crate::extensions::basis::CellBasis;
 use crate::extensions::cell_model::CellModel;
 use crate::extensions::coord::CoordinateDistribution;
+use crate::extensions::count_priors::CountPriors;
 use crate::extensions::distance::{AssignmentCache, CellAssigner};
 use crate::extensions::erasure::{
     ErasedCellKernel, ErasedResponseModel, ErasedScaleModel, KernelOf,
 };
 use crate::extensions::inclusion::{ErasedInclusionModel, InclusionUsage, InvalidInclusionWeights};
+use crate::extensions::membership::MembershipKernel;
 use crate::extensions::moves::{ModelCtx, MoveSet};
 use crate::extensions::response::ResponseModel;
 use crate::extensions::scale::{InvalidScalePrecisions, ScaleCtx, ScaleModel};
@@ -155,39 +159,65 @@ pub struct Sampler {
     weights_enc: Vec<f64>,
     assigner: Arc<dyn CellAssigner>,
     move_set: Arc<MoveSet>,
+    /// Soft-membership kernel; retained for the fitted model's predict path.
+    membership: Option<Arc<dyn MembershipKernel>>,
+    /// Cell basis; retained for the fitted model's predict path.
+    basis: Option<Arc<dyn CellBasis>>,
+    /// Count priors; `None` prices through the paper pair.
+    count_priors: Option<Arc<dyn CountPriors>>,
+    /// True when any component axis was set explicitly.
+    custom_components: bool,
 }
 
 impl Sampler {
-    /// A sampler over raw caller data with the configured move set
-    /// (the paper set unless `with_move_set` was called on the config).
+    /// A sampler over raw caller data with the default (paper) components.
+    /// Component wiring is crate-internal: `SamplerBuilder`.
     pub fn new(config: AddiVortesConfig, x: &Data, y: &[f64]) -> Result<Self> {
-        // Arc<MoveSet> is single-threaded sharing between config and sampler.
-        // Send + Sync is never required of move sets (the j-loop is never
-        // parallelised within a chain).
-        #[allow(clippy::arc_with_non_send_sync)]
-        let move_set = match &config.move_set {
-            Some(move_set) => Arc::clone(move_set),
-            None => Arc::new(crate::extensions::moves::default_move_set()?),
-        };
-        Self::with_arc_move_set(config, x, y, move_set)
+        Self::with_components(config, Components::default(), x, y)
     }
 
-    /// A sampler with a caller-supplied move set (overrides any
-    /// set on the config; last wins).
-    pub fn with_move_set(
+    /// A sampler with a caller-supplied move set (crate-internal;
+    /// overrides any set on the components).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn with_move_set(
         config: AddiVortesConfig,
         x: &Data,
         y: &[f64],
         move_set: MoveSet,
     ) -> Result<Self> {
-        // Single-threaded sharing; see `Sampler::new`.
-        #[allow(clippy::arc_with_non_send_sync)]
-        let move_set = Arc::new(move_set);
-        Self::with_arc_move_set(config, x, y, move_set)
+        Self::with_components(
+            config,
+            Components {
+                // Single-threaded sharing; Send + Sync is never required
+                // of move sets.
+                #[allow(clippy::arc_with_non_send_sync)]
+                move_set: Some(Arc::new(move_set)),
+                ..Components::default()
+            },
+            x,
+            y,
+        )
     }
 
-    fn with_arc_move_set(
+    /// The single construction path: plain config + component wiring.
+    pub(crate) fn with_components(
         config: AddiVortesConfig,
+        components: Components,
+        x: &Data,
+        y: &[f64],
+    ) -> Result<Self> {
+        // The move set resolves first; everything else in `assemble`.
+        #[allow(clippy::arc_with_non_send_sync)]
+        let move_set = match &components.move_set {
+            Some(move_set) => Arc::clone(move_set),
+            None => Arc::new(crate::extensions::moves::default_move_set()?),
+        };
+        Self::checked(config, components, x, y, move_set)
+    }
+
+    fn checked(
+        config: AddiVortesConfig,
+        components: Components,
         x: &Data,
         y: &[f64],
         move_set: Arc<MoveSet>,
@@ -233,7 +263,9 @@ impl Sampler {
         let sigma_hat = scaler::sigma_hat(&x_enc, &y_scaled);
         let lambda = scaler::calibrate_lambda(config.nu, config.q, sigma_hat);
 
-        Self::assemble(config, x_enc, y_scaled, scaler, warnings, lambda, move_set)
+        Self::assemble(
+            config, components, x_enc, y_scaled, scaler, warnings, lambda, move_set,
+        )
     }
 
     /// Assemble a sampler over already-scaled, already-encoded state with a
@@ -242,8 +274,10 @@ impl Sampler {
     /// SBC/Geweke batteries pin λ instead of calibrating it from data: exact
     /// SBC requires the generating prior and the fitted prior to be the same
     /// distribution, which a data-dependent λ is not).
+    #[allow(clippy::too_many_arguments)]
     fn assemble(
         config: AddiVortesConfig,
+        components: Components,
         x_enc: Data,
         y_scaled: Vec<f64>,
         scaler: FittedScaler,
@@ -253,6 +287,9 @@ impl Sampler {
     ) -> Result<Self> {
         let p_enc = x_enc.n_cols();
         let n = x_enc.n_rows();
+        // Recorded before wiring: a fit with any explicit component refuses
+        // to serialise (trait objects have no portable form).
+        let custom_components = components.any_custom();
         // The cell-prior width dial: a directly-set σ_μ wins over the k-rule
         // (and, below, over the family rule); unset, both expressions are
         // exactly the pre-dial ones, so the default chain is bit-identical.
@@ -266,7 +303,7 @@ impl Sampler {
         // Per-encoded-column coordinate distributions: the
         // config's per-raw-column laws expanded alongside one-hot encoding
         // (a group shares one law), or the defaults per metric.
-        let coord_dists: Vec<Arc<dyn CoordinateDistribution>> = match &config.coords {
+        let coord_dists: Vec<Arc<dyn CoordinateDistribution>> = match &components.coords {
             Some(coords) => {
                 if coords.len() != scaler.n_raw_cols() {
                     return Err(AddiVortesError::InvalidHyperparameter {
@@ -293,7 +330,7 @@ impl Sampler {
 
         // Inclusion model: the config's, or the point's default over
         // raw columns (the extension point's module owns which concrete model that is).
-        let inclusion: Box<dyn ErasedInclusionModel> = match &config.inclusion {
+        let inclusion: Box<dyn ErasedInclusionModel> = match &components.inclusion {
             Some(model) => model.clone_erased(),
             None => crate::extensions::inclusion::default_erased(scaler.n_raw_cols()),
         };
@@ -310,12 +347,24 @@ impl Sampler {
                 ),
             });
         }
+        // The weight values are a boundary check too (the plain config no
+        // longer sees the model, so this is the first place they exist).
+        if let Some(w) = inclusion
+            .weights()
+            .iter()
+            .find(|w| !w.is_finite() || **w <= 0.0)
+        {
+            return Err(AddiVortesError::InvalidHyperparameter {
+                name: "inclusion_weights".into(),
+                reason: format!("every weight must be finite and positive, got {w}"),
+            });
+        }
         let weights_enc =
             expand_weights(inclusion.weights(), scaler.col_map(), scaler.n_raw_cols())?;
 
         // Assigner: the config's, or the point's default over the
         // encoded metrics (the extension point's module owns which concrete assigner that is).
-        let assigner: Arc<dyn CellAssigner> = match &config.assigner {
+        let assigner: Arc<dyn CellAssigner> = match &components.assigner {
             Some(assigner) => Arc::clone(assigner),
             None => crate::extensions::distance::default_assigner(scaler.metrics().to_vec()),
         };
@@ -375,11 +424,11 @@ impl Sampler {
         // its own panicked partway through the first sweep — the crate's own H
         // sampler paired the weighted family by hand, and nothing said a caller
         // had to.
-        let heteroscedastic_scale = config
+        let heteroscedastic_scale = components
             .scale_model
             .as_ref()
             .is_some_and(|factory| factory.heteroscedastic());
-        let cell_kernel: Box<dyn ErasedCellKernel> = match (&config.cell_model, family) {
+        let cell_kernel: Box<dyn ErasedCellKernel> = match (&components.cell_model, family) {
             (Some(factory), _) => factory.kernel(),
             (None, crate::engine::model::ResponseFamily::RobustT { .. }) => {
                 crate::extensions::erasure::weighted_cell_kernel(family_sigma_mu_sq)?
@@ -393,7 +442,7 @@ impl Sampler {
         // together and agree on q; a scalar payload takes no basis. Checked
         // here, where the payload is first known, so the failure is a clean
         // error at `fit` rather than a mis-shaped statistic later.
-        let basis_rows = match (&config.basis, cell_kernel.cell_basis()) {
+        let basis_rows = match (&components.basis, cell_kernel.cell_basis()) {
             (Some(basis), true) => {
                 let q = cell_kernel.payload_width();
                 if basis.q() != q {
@@ -405,7 +454,7 @@ impl Sampler {
                         ),
                     });
                 }
-                if config.membership.is_some() {
+                if components.membership.is_some() {
                     return Err(AddiVortesError::InvalidHyperparameter {
                         name: "cell_basis".into(),
                         reason: "a basis payload and soft membership do not \
@@ -472,7 +521,7 @@ impl Sampler {
             }
         };
 
-        let scale_model: Box<dyn ErasedScaleModel> = match (&config.scale_model, family) {
+        let scale_model: Box<dyn ErasedScaleModel> = match (&components.scale_model, family) {
             (Some(factory), _) => factory.scale(),
             (None, crate::engine::model::ResponseFamily::Gaussian) => {
                 crate::extensions::erasure::default_scale_model(config.nu, lambda)?
@@ -485,7 +534,7 @@ impl Sampler {
             ),
         };
         let response_model: Option<Box<dyn ErasedResponseModel>> =
-            match (&config.response_model, family) {
+            match (&components.response_model, family) {
                 (Some(factory), _) => Some(factory.step()),
                 (None, crate::engine::model::ResponseFamily::Gaussian) => None,
                 (None, crate::engine::model::ResponseFamily::BinaryProbit) => {
@@ -512,7 +561,7 @@ impl Sampler {
         // through the real key/kernel path (an assigner without dense keys
         // errors here, at construction). Hard membership keeps the
         // golden-pinned diagonal path, with no runtime branch on the default.
-        let ensemble = match &config.membership {
+        let ensemble = match &components.membership {
             None => {
                 let unit = EnsembleUnit::new(
                     tessellations,
@@ -569,6 +618,10 @@ impl Sampler {
             weights_enc,
             assigner,
             move_set,
+            membership: components.membership,
+            basis: components.basis,
+            count_priors: components.count_priors,
+            custom_components,
         })
     }
 
@@ -576,7 +629,8 @@ impl Sampler {
     /// model owns its own prior parameters (the built-in Gaussian's
     /// σ_μ² = (0.5/(k√m))² is available as
     /// [`GaussianCellModel::new`](crate::extensions::cell_model::GaussianCellModel)).
-    pub fn with_cell_model<M: CellModel + 'static>(
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn with_cell_model<M: CellModel + 'static>(
         config: AddiVortesConfig,
         x: &Data,
         y: &[f64],
@@ -593,7 +647,8 @@ impl Sampler {
     /// and weight buffers; the step runs first in every sweep's pinned hook
     /// order (augment → scale → inclusion → j-loop).
     #[must_use]
-    pub fn with_response_model<K: ResponseModel + 'static>(mut self, step: K) -> Self {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn with_response_model<K: ResponseModel + 'static>(mut self, step: K) -> Self {
         let n = self.x.n_rows();
         self.y_observed = Some(self.y.clone());
         self.obs_weights = Some(vec![1.0; n]);
@@ -604,7 +659,7 @@ impl Sampler {
     /// Replace the scale draw with a caller-supplied [`ScaleModel`]
     /// (deep seam): consuming setter, call before the first sweep.
     #[must_use]
-    pub fn with_scale_model<S: ScaleModel + 'static>(mut self, scale: S) -> Self {
+    pub(crate) fn with_scale_model<S: ScaleModel + 'static>(mut self, scale: S) -> Self {
         self.scale = Box::new(scale);
         self
     }
@@ -698,7 +753,7 @@ impl Sampler {
         // move that changes a count. Left unset, the context keeps its own
         // ShiftedPoissonBinomial, which prices identically to the pre-hook
         // kernel: the default chain is provably untouched by this seam.
-        let ctx = match &self.config.count_priors {
+        let ctx = match &self.count_priors {
             Some(priors) => ctx.with_count_priors(priors.as_ref()),
             None => ctx,
         };
@@ -756,7 +811,7 @@ impl Sampler {
     /// (σ̂, λ) was fitted against the construction-time response and is
     /// deliberately not recomputed here.
     ///
-    /// With a configured [`ResponseModel`] this replaces the observed
+    /// With a configured augmentation step this replaces the observed
     /// response that `augment` reads each sweep; otherwise it replaces the
     /// working response directly.
     ///
@@ -844,9 +899,12 @@ impl Sampler {
     /// directly, exactly what a successive-conditional simulator needs.
     ///
     /// The paper move set is `MoveSetBuilder::stone_gosling().build()`; all
-    /// other components come from the config, as in [`Sampler::new`].
-    pub fn pinned_prior(
+    /// other components arrive explicitly.
+    #[allow(clippy::too_many_arguments)]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn pinned_prior(
         config: AddiVortesConfig,
+        components: Components,
         x_enc: Data,
         metrics_enc: Vec<Metric>,
         y_scaled: Vec<f64>,
@@ -854,24 +912,43 @@ impl Sampler {
         move_set: MoveSet,
     ) -> Result<Self> {
         let scaler = FittedScaler::identity(x_enc.n_cols(), metrics_enc);
-        Self::assemble(config, x_enc, y_scaled, scaler, Vec::new(), lambda, {
-            // Single-threaded sharing; see `Sampler::new`.
-            #[allow(clippy::arc_with_non_send_sync)]
-            Arc::new(move_set)
-        })
+        Self::assemble(
+            config,
+            components,
+            x_enc,
+            y_scaled,
+            scaler,
+            Vec::new(),
+            lambda,
+            {
+                // Single-threaded sharing; see `Sampler::new`.
+                #[allow(clippy::arc_with_non_send_sync)]
+                Arc::new(move_set)
+            },
+        )
     }
 
     /// The statistical gates' internal alias for [`Sampler::pinned_prior`].
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn pinned_prior_for_tests(
         config: AddiVortesConfig,
+        components: Components,
         x_enc: Data,
         metrics_enc: Vec<Metric>,
         y_scaled: Vec<f64>,
         lambda: f64,
         move_set: MoveSet,
     ) -> Result<Self> {
-        Self::pinned_prior(config, x_enc, metrics_enc, y_scaled, lambda, move_set)
+        Self::pinned_prior(
+            config,
+            components,
+            x_enc,
+            metrics_enc,
+            y_scaled,
+            lambda,
+            move_set,
+        )
     }
 
     /// Test-only (Geweke successive-conditional simulator): replace the scaled
@@ -976,18 +1053,29 @@ impl Sampler {
         &self.x
     }
 
-    /// Tear down into the pieces the fitted model owns:
-    /// `(config, scaler, warnings, assigner)`.
-    pub(crate) fn into_fitted_parts(
-        self,
-    ) -> (
-        AddiVortesConfig,
-        FittedScaler,
-        Vec<Warning>,
-        Arc<dyn CellAssigner>,
-    ) {
-        (self.config, self.scaler, self.warnings, self.assigner)
+    /// Tear down into the pieces the fitted model owns.
+    pub(crate) fn into_fitted_parts(self) -> FittedParts {
+        FittedParts {
+            config: self.config,
+            scaler: self.scaler,
+            warnings: self.warnings,
+            assigner: self.assigner,
+            membership: self.membership,
+            basis: self.basis,
+            custom_components: self.custom_components,
+        }
     }
+}
+
+/// What a finished sampler hands the fitted model (crate-internal).
+pub(crate) struct FittedParts {
+    pub(crate) config: AddiVortesConfig,
+    pub(crate) scaler: FittedScaler,
+    pub(crate) warnings: Vec<Warning>,
+    pub(crate) assigner: Arc<dyn CellAssigner>,
+    pub(crate) membership: Option<Arc<dyn MembershipKernel>>,
+    pub(crate) basis: Option<Arc<dyn CellBasis>>,
+    pub(crate) custom_components: bool,
 }
 
 /// Validate a custom scale model's per-observation precisions:
@@ -1102,7 +1190,7 @@ mod tests {
             .fit(&x_flag, &flag)
             .expect("the label family fits separable data");
         assert_eq!(
-            quick()
+            crate::engine::builder::SamplerBuilder::new(quick())
                 .with_scale_model(crate::extensions::scale::HVariance::new(4).unwrap())
                 .fit(&x, &linear)
                 .unwrap_err(),
@@ -1201,9 +1289,11 @@ mod tests {
 
         let (x, y) = toy_data();
         let chain_bits = |assigner: Option<Arc<dyn CellAssigner>>| -> Vec<u64> {
-            let mut config = small_config(11);
-            config.assigner = assigner;
-            let sampler = Sampler::new(config, &x, &y).unwrap();
+            let components = Components {
+                assigner,
+                ..Components::default()
+            };
+            let sampler = Sampler::with_components(small_config(11), components, &x, &y).unwrap();
             let mut bits = Vec::new();
             for draw in sampler.take(12) {
                 let draw = draw.unwrap();
@@ -1253,13 +1343,13 @@ mod tests {
         // the inclusion machinery is provably inert on the default path.
         let (x, y) = toy_data();
         let run = |weighted: bool| -> Vec<u64> {
-            let mut config = small_config(11);
+            let mut components = Components::default();
             if weighted {
-                config.inclusion = Some(Arc::new(
+                components.inclusion = Some(Arc::new(
                     crate::extensions::inclusion::WeightedInclusion::new(vec![1.0, 1.0]),
                 ));
             }
-            let sampler = Sampler::new(config, &x, &y).unwrap();
+            let sampler = Sampler::with_components(small_config(11), components, &x, &y).unwrap();
             sampler
                 .take(4)
                 .map(|d| d.unwrap().sigma_sq.to_bits())

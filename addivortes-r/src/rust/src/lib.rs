@@ -22,7 +22,7 @@
 
 use extendr_api::prelude::*;
 
-use addivortes::config_spec::{response_family_name, ConfigSpec};
+use addivortes::config_spec::ConfigSpec;
 use addivortes::{Data, FittedAddiVortes, ResponseFamily};
 
 fn rerr(e: impl std::fmt::Display) -> Error {
@@ -226,6 +226,14 @@ impl FittedModel {
     }
 }
 
+/// The spec's declared response-family name (the crate default when unset).
+fn spec_family_name(spec: &ConfigSpec) -> String {
+    spec.response_family
+        .as_deref()
+        .unwrap_or("gaussian")
+        .to_string()
+}
+
 /// Parse and validate a `ConfigSpec` JSON payload, without any data.
 fn parse_spec(spec_json: &str) -> Result<ConfigSpec> {
     let spec: ConfigSpec = serde_json::from_str(spec_json).map_err(rerr)?;
@@ -251,11 +259,10 @@ fn avt_validate_spec(spec_json: String) {
 fn avt_fit(x: RMatrix<f64>, y: Vec<f64>, spec_json: String) -> FittedModel {
     let spec = unwrap_r(parse_spec(&spec_json));
     let data = unwrap_r(to_data(&x));
-    // The covariate-sized settings are sized by the data, so the config is
-    // assembled here rather than at construction.
-    let config = unwrap_r(spec.into_config(&data).map_err(rerr));
-    let family = response_family_name(config.response_family()).to_string();
-    let fitted = unwrap_r(config.fit(&data, &y).map_err(rerr));
+    // The covariate-sized settings are sized by the data, so the spec
+    // assembles here rather than at construction.
+    let family = spec_family_name(&spec);
+    let fitted = unwrap_r(spec.fit(&data, &y).map_err(rerr));
     FittedModel {
         inner: fitted,
         response_family: family,
@@ -273,13 +280,8 @@ fn avt_fit_chains(x: RMatrix<f64>, y: Vec<f64>, spec_json: String, n_chains: f64
     }
     let spec = unwrap_r(parse_spec(&spec_json));
     let data = unwrap_r(to_data(&x));
-    let config = unwrap_r(spec.into_config(&data).map_err(rerr));
-    let family = response_family_name(config.response_family()).to_string();
-    let fits = unwrap_r(
-        config
-            .fit_chains(&data, &y, n_chains as usize)
-            .map_err(rerr),
-    );
+    let family = spec_family_name(&spec);
+    let fits = unwrap_r(spec.fit_chains(&data, &y, n_chains as usize).map_err(rerr));
     List::from_values(fits.into_iter().map(|inner| FittedModel {
         inner,
         response_family: family.clone(),

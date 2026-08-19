@@ -224,8 +224,8 @@ fn all_eighteen_error_variants_are_reachable() {
         ),
     );
     // 14. NonFiniteDistance (custom assigner mid-chain)
-    let mut poisoned = quick_config(4);
-    poisoned.assigner = Some(Arc::new(PoisonMetric));
+    let poisoned = crate::engine::builder::SamplerBuilder::new(quick_config(4))
+        .with_assigner(Arc::new(PoisonMetric));
     hit(
         "NonFiniteDistance",
         matches!(poisoned.fit(&x, &y), Err(E::NonFiniteDistance { .. })),
@@ -239,10 +239,11 @@ fn all_eighteen_error_variants_are_reachable() {
         ),
     );
     // 16. Extension (failing custom InclusionModel update, mid-chain)
-    let mut failing = quick_config(5);
-    failing.inclusion = Some(Arc::new(FailingInclusion {
-        weights: vec![1.0, 1.0],
-    }));
+    let failing = crate::engine::builder::SamplerBuilder::new(quick_config(5)).with_inclusion(
+        FailingInclusion {
+            weights: vec![1.0, 1.0],
+        },
+    );
     hit(
         "Extension",
         matches!(failing.fit(&x, &y), Err(E::Extension { .. })),
@@ -270,13 +271,13 @@ fn all_eighteen_error_variants_are_reachable() {
             Ok(vec![0; x.n_rows()])
         }
     }
-    let mut hard_only = quick_config(6)
-        .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap());
-    hard_only.assigner = Some(Arc::new(HardOnlyAssigner));
+    let hard_only = crate::engine::builder::SamplerBuilder::new(quick_config(6))
+        .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap())
+        .with_assigner(Arc::new(HardOnlyAssigner));
     hit(
         "MembershipUnsupported",
         matches!(
-            crate::Sampler::new(hard_only, &x, &y),
+            hard_only.build(&x, &y),
             Err(E::MembershipUnsupported { .. })
         ),
     );
@@ -457,45 +458,38 @@ fn chain_bits(mut sampler: crate::Sampler, sweeps: usize) -> Vec<u64> {
 /// Selecting the defaults explicitly (paper move set, per-column Euclidean
 /// coordinate laws, the standalone Euclidean geometry, bit-equal to the
 /// all-Euclidean compound, uniform inclusion, the Gaussian cell model)
-/// reproduces the untouched-config chain bit for bit. Fields are set
-/// directly so this runs in the no-feature test build too; the feature-gated
-/// `with_*` setters store into exactly these fields.
+/// reproduces the default-components chain bit for bit.
 #[test]
 fn explicit_default_selection_reproduces_default_chain() {
     let (x, y) = small_xy();
     let default_bits = chain_bits(crate::Sampler::new(quick_config(41), &x, &y).unwrap(), 6);
 
-    let mut config = quick_config(41);
-    #[allow(clippy::arc_with_non_send_sync)]
-    // single-threaded sharing (the j-loop is never parallelised within a chain)
-    let paper_set = Arc::new(MoveSetBuilder::stone_gosling().build().unwrap());
-    config.move_set = Some(paper_set);
-    config.coords = Some(vec![
-        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap())
-            as Arc<dyn CoordinateDistribution>,
-        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap()) as Arc<_>,
-    ]);
-    config.assigner = Some(Arc::new(crate::extensions::distance::Euclidean));
-    config.inclusion = Some(Arc::new(
-        crate::extensions::inclusion::UniformInclusion::new(2),
-    ));
     let sigma_mu_sq = crate::engine::scaler::sigma_mu_sq(3.0, 3);
-    config.cell_model = Some(Arc::new(
-        crate::extensions::cell_model::GaussianCellModel::new(sigma_mu_sq).unwrap(),
-    ));
+    let explicit = crate::engine::builder::SamplerBuilder::new(quick_config(41))
+        .with_move_set(MoveSetBuilder::stone_gosling().build().unwrap())
+        .with_coords(vec![
+            Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap())
+                as Arc<dyn CoordinateDistribution>,
+            Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap()) as Arc<_>,
+        ])
+        .with_assigner(Arc::new(crate::extensions::distance::Euclidean))
+        .with_inclusion(crate::extensions::inclusion::UniformInclusion::new(2))
+        .with_cell_model(crate::extensions::cell_model::GaussianCellModel::new(
+            sigma_mu_sq,
+        ).unwrap());
 
     assert_eq!(
         default_bits,
-        chain_bits(crate::Sampler::new(config, &x, &y).unwrap(), 6),
+        chain_bits(explicit.build(&x, &y).unwrap(), 6),
         "explicitly selecting every default extension-point must not perturb the chain"
     );
 }
 
-/// The config-level deep-seam route (cell model + kernel step + scale model
-/// held on the config) produces the same chain as the Sampler-level seam
-/// entries: one wiring, two doors.
+/// The builder route (cell model + kernel step + scale model on the
+/// builder) produces the same chain as the Sampler-level seam entries: one
+/// wiring, reachable mid-loop too.
 #[test]
-fn config_seam_route_matches_sampler_seam_route() {
+fn builder_seam_route_matches_sampler_seam_route() {
     #[derive(Debug, Clone)]
     struct HalvedWeights;
     impl crate::extensions::response::ResponseModel for HalvedWeights {
@@ -531,15 +525,16 @@ fn config_seam_route_matches_sampler_seam_route() {
     .with_response_model(HalvedWeights)
     .with_scale_model(PinnedSigma::unit());
 
-    let mut config = quick_config(43);
-    config.cell_model = Some(Arc::new(
-        crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
-    ));
-    config.response_model = Some(Arc::new(HalvedWeights));
-    config.scale_model = Some(Arc::new(PinnedSigma::unit()));
-    let via_config = crate::Sampler::new(config, &x, &y).unwrap();
+    let via_builder = crate::engine::builder::SamplerBuilder::new(quick_config(43))
+        .with_cell_model(crate::extensions::cell_model::WeightedGaussianModel::new(
+            sigma_mu_sq,
+        ).unwrap())
+        .with_response_model(HalvedWeights)
+        .with_scale_model(PinnedSigma::unit())
+        .build(&x, &y)
+        .unwrap();
 
-    assert_eq!(chain_bits(via_sampler, 6), chain_bits(via_config, 6));
+    assert_eq!(chain_bits(via_sampler, 6), chain_bits(via_builder, 6));
 }
 
 /// A wrong-length coordinate-law vector is a fit-boundary configuration error
@@ -547,12 +542,13 @@ fn config_seam_route_matches_sampler_seam_route() {
 #[test]
 fn wrong_length_coords_error_at_the_fit_boundary() {
     let (x, y) = small_xy();
-    let mut config = quick_config(47);
-    config.coords = Some(vec![
-        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap())
-            as Arc<dyn CoordinateDistribution>,
-    ]);
-    let err = crate::Sampler::new(config, &x, &y).unwrap_err();
+    let err = crate::engine::builder::SamplerBuilder::new(quick_config(47))
+        .with_coords(vec![
+            Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap())
+                as Arc<dyn CoordinateDistribution>,
+        ])
+        .build(&x, &y)
+        .unwrap_err();
     assert!(matches!(
         err,
         AddiVortesError::InvalidHyperparameter { ref name, .. } if name == "coords"
@@ -596,18 +592,20 @@ fn h_addivortes_entry_recovers_heteroscedastic_structure() {
     let shared = std::sync::Arc::new(std::sync::Mutex::new(
         crate::extensions::scale::HVariance::new(m_prime).unwrap(),
     ));
-    let config = AddiVortesConfig::new(2027)
-        .with_m(m)
-        .with_omega(0.5)
-        .with_cell_model(
-            crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
-        );
-    let mut sampler = crate::Sampler::new(config, &x, &y)
-        .unwrap()
-        .with_scale_model(crate::test_support::SharedHVariance {
-            inner: std::sync::Arc::clone(&shared),
-            cache: Vec::new(),
-        });
+    let builder = crate::engine::builder::SamplerBuilder::new(
+        AddiVortesConfig::new(2027).with_m(m).with_omega(0.5),
+    )
+    .with_cell_model(crate::extensions::cell_model::WeightedGaussianModel::new(
+        sigma_mu_sq,
+    ).unwrap());
+    let mut sampler =
+        builder
+            .build(&x, &y)
+            .unwrap()
+            .with_scale_model(crate::test_support::SharedHVariance {
+                inner: std::sync::Arc::clone(&shared),
+                cache: Vec::new(),
+            });
 
     // The §3.3 calibration resolved from the engine's own (ν, λ) at sweep 1.
     sampler.step().unwrap();
@@ -737,15 +735,17 @@ fn soft_membership_chains_are_reproducible_and_fit() {
     let x = Data::from_rows(&xs.iter().map(|&v| [v]).collect::<Vec<_>>()).unwrap();
 
     let config = |seed: u64| {
-        AddiVortesConfig::new(seed)
-            .with_m(15)
-            .with_omega(0.5)
-            .with_burn_in(150)
-            .with_draws(100)
-            .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.05).unwrap())
+        crate::engine::builder::SamplerBuilder::new(
+            AddiVortesConfig::new(seed)
+                .with_m(15)
+                .with_omega(0.5)
+                .with_burn_in(150)
+                .with_draws(100),
+        )
+        .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.05).unwrap())
     };
     let chain_bits = |seed: u64| -> Vec<u64> {
-        let mut sampler = crate::Sampler::new(config(seed), &x, &y).unwrap();
+        let mut sampler = config(seed).build(&x, &y).unwrap();
         let mut bits = Vec::new();
         for _ in 0..10 {
             let draw = sampler.step().unwrap();
@@ -776,8 +776,10 @@ fn soft_membership_chains_are_reproducible_and_fit() {
 fn soft_membership_cache_matches_fresh_recompute_bitwise() {
     let (x, y) = small_xy();
     let kernel = crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap();
-    let config = quick_config(11).with_membership(kernel);
-    let mut sampler = crate::Sampler::new(config, &x, &y).unwrap();
+    let mut sampler = crate::engine::builder::SamplerBuilder::new(quick_config(11))
+        .with_membership(kernel)
+        .build(&x, &y)
+        .unwrap();
     for _ in 0..30 {
         sampler.step().unwrap();
     }
@@ -807,11 +809,12 @@ fn soft_membership_cache_matches_fresh_recompute_bitwise() {
 fn soft_predictions_match_hand_computed_membership_sums() {
     let (x, y) = small_xy();
     let kernel = crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap();
-    let config = quick_config(13)
-        .with_burn_in(20)
-        .with_draws(10)
-        .with_membership(kernel);
-    let model = config.fit(&x, &y).unwrap();
+    let model = crate::engine::builder::SamplerBuilder::new(
+        quick_config(13).with_burn_in(20).with_draws(10),
+    )
+    .with_membership(kernel)
+    .fit(&x, &y)
+    .unwrap();
     let predictions = model.predict(&x).unwrap();
 
     let (posterior, scaler) = model.into_parts();
@@ -990,11 +993,11 @@ struct Parsimonious {
 }
 
 impl crate::extensions::count_priors::CountPriors for Parsimonious {
-    fn log_cell_count_ratio(&self, _b: usize, _ctx: &crate::ModelCtx) -> f64 {
+    fn log_cell_count_ratio(&self, _b: usize, _ctx: &crate::extensions::moves::ModelCtx) -> f64 {
         // ln P(b) - ln P(b-1) = ln(0.05): each extra cell costs a factor 20.
         ln(0.05)
     }
-    fn log_dim_count_ratio(&self, d: usize, ctx: &crate::ModelCtx) -> f64 {
+    fn log_dim_count_ratio(&self, d: usize, ctx: &crate::extensions::moves::ModelCtx) -> f64 {
         self.fallback.log_dim_count_ratio(d, ctx)
     }
 }
@@ -1035,7 +1038,7 @@ fn mean_cells(model: &crate::FittedAddiVortes) -> f64 {
 fn selected_count_prior_reaches_the_fit() {
     let (x, y) = count_prior_fixture();
     let paper = count_prior_config().fit(&x, &y).unwrap();
-    let parsimonious = count_prior_config()
+    let parsimonious = crate::engine::builder::SamplerBuilder::new(count_prior_config())
         .with_count_priors(Parsimonious {
             fallback: crate::extensions::count_priors::ShiftedPoissonBinomial,
         })
@@ -1060,7 +1063,7 @@ fn selected_count_prior_reaches_the_fit() {
 fn explicit_default_count_prior_is_bit_identical_to_unset() {
     let (x, y) = count_prior_fixture();
     let unset = count_prior_config().fit(&x, &y).unwrap();
-    let explicit = count_prior_config()
+    let explicit = crate::engine::builder::SamplerBuilder::new(count_prior_config())
         .with_count_priors(crate::extensions::count_priors::ShiftedPoissonBinomial)
         .fit(&x, &y)
         .unwrap();
@@ -1117,9 +1120,9 @@ fn basis_config(seed: u64) -> AddiVortesConfig {
 #[test]
 fn basis_payload_with_q_above_one_fits_and_predicts() {
     let (x, y) = basis_fixture(120);
-    let fitted = basis_config(11)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
-        .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
+    let fitted = crate::engine::builder::SamplerBuilder::new(basis_config(11))
+        .with_cell_model(crate::extensions::basis::LinearGaussianModel::new(0.05, 2).unwrap())
+        .with_cell_basis(crate::extensions::basis::LinearBasis::new(vec![0]))
         .fit(&x, &y)
         .expect("a q = 2 basis payload must fit");
     let predictions = fitted.predict(&x).unwrap();
@@ -1140,9 +1143,9 @@ fn basis_payload_with_q_above_one_fits_and_predicts() {
 fn linear_cells_beat_constant_cells_on_a_locally_linear_surface() {
     let (x, y) = basis_fixture(200);
     let scalar = basis_config(7).fit(&x, &y).unwrap();
-    let basis = basis_config(7)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
-        .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
+    let basis = crate::engine::builder::SamplerBuilder::new(basis_config(7))
+        .with_cell_model(crate::extensions::basis::LinearGaussianModel::new(0.05, 2).unwrap())
+        .with_cell_basis(crate::extensions::basis::LinearBasis::new(vec![0]))
         .fit(&x, &y)
         .unwrap();
     assert!(
@@ -1162,8 +1165,11 @@ fn the_linear_family_at_q_one_reproduces_the_scalar_family() {
     let scalar = basis_config(3).fit(&x, &y).unwrap();
     // The cell prior the default assembles for this config: σ_μ = 0.5/(k√m).
     let sigma_mu_sq = crate::engine::scaler::sigma_mu_sq(3.0, 20);
-    let linear = basis_config(3)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(sigma_mu_sq, 1).unwrap())
+    let linear = crate::engine::builder::SamplerBuilder::new(basis_config(3))
+        .with_cell_model(crate::extensions::basis::LinearGaussianModel::new(
+            sigma_mu_sq,
+            1,
+        ).unwrap())
         .fit(&x, &y)
         .unwrap();
 
@@ -1183,8 +1189,8 @@ fn basis_and_payload_must_arrive_together_and_agree() {
     let (x, y) = basis_fixture(40);
 
     // A basis payload with no basis.
-    let err = basis_config(1)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
+    let err = crate::engine::builder::SamplerBuilder::new(basis_config(1))
+        .with_cell_model(crate::extensions::basis::LinearGaussianModel::new(0.05, 2).unwrap())
         .fit(&x, &y)
         .unwrap_err();
     assert!(
@@ -1193,8 +1199,8 @@ fn basis_and_payload_must_arrive_together_and_agree() {
     );
 
     // A basis with a scalar payload.
-    let err = basis_config(1)
-        .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
+    let err = crate::engine::builder::SamplerBuilder::new(basis_config(1))
+        .with_cell_basis(crate::extensions::basis::LinearBasis::new(vec![0]))
         .fit(&x, &y)
         .unwrap_err();
     assert!(
@@ -1203,9 +1209,9 @@ fn basis_and_payload_must_arrive_together_and_agree() {
     );
 
     // q disagreement between the payload and the basis.
-    let err = basis_config(1)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 3).unwrap())
-        .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
+    let err = crate::engine::builder::SamplerBuilder::new(basis_config(1))
+        .with_cell_model(crate::extensions::basis::LinearGaussianModel::new(0.05, 3).unwrap())
+        .with_cell_basis(crate::extensions::basis::LinearBasis::new(vec![0]))
         .fit(&x, &y)
         .unwrap_err();
     assert!(
@@ -1214,9 +1220,9 @@ fn basis_and_payload_must_arrive_together_and_agree() {
     );
 
     // A basis column the encoded design does not have.
-    let err = basis_config(1)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
-        .with_cell_basis(crate::basis::LinearBasis::new(vec![9]))
+    let err = crate::engine::builder::SamplerBuilder::new(basis_config(1))
+        .with_cell_model(crate::extensions::basis::LinearGaussianModel::new(0.05, 2).unwrap())
+        .with_cell_basis(crate::extensions::basis::LinearBasis::new(vec![9]))
         .fit(&x, &y)
         .unwrap_err();
     assert!(
@@ -1229,9 +1235,9 @@ fn basis_and_payload_must_arrive_together_and_agree() {
 #[test]
 fn a_basis_payload_and_soft_membership_are_refused() {
     let (x, y) = basis_fixture(40);
-    let err = basis_config(1)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
-        .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
+    let err = crate::engine::builder::SamplerBuilder::new(basis_config(1))
+        .with_cell_model(crate::extensions::basis::LinearGaussianModel::new(0.05, 2).unwrap())
+        .with_cell_basis(crate::extensions::basis::LinearBasis::new(vec![0]))
         .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap())
         .fit(&x, &y)
         .unwrap_err();
