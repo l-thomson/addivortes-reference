@@ -115,7 +115,9 @@ fn basis_design(seed: u64) -> Data {
 
 fn coord_laws() -> Vec<Arc<dyn CoordinateDistribution>> {
     (0..P)
-        .map(|_| Arc::new(EuclideanNormal::new(SIGMA_C).unwrap()) as Arc<dyn CoordinateDistribution>)
+        .map(|_| {
+            Arc::new(EuclideanNormal::new(SIGMA_C).unwrap()) as Arc<dyn CoordinateDistribution>
+        })
         .collect()
 }
 
@@ -672,7 +674,8 @@ fn dart_mh_correction_passes_the_externalised_battery() {
 
     let mut sc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C);
     let sigma_sq0 = draw_inv_chi_sq(NU, LAMBDA, &mut sc_rng);
-    let builder = base_builder(seed ^ 0xC4A1).with_inclusion(DartInclusion::new(DART_ALPHA, P).unwrap());
+    let builder =
+        base_builder(seed ^ 0xC4A1).with_inclusion(DartInclusion::new(DART_ALPHA, P).unwrap());
     let sampler = pinned_sampler(builder, &x, y_init());
     let mut sc = GaussianSc {
         sampler,
@@ -1135,8 +1138,8 @@ fn h_addivortes_passes_the_externalised_battery() {
     // The H sampler: weighted-Gaussian mean cells (the per-observation
     // precisions demand the weighted statistic) + the shared variance
     // ensemble on the ScaleModel seam.
-    let builder =
-        base_builder(seed ^ 0xC4A1).with_cell_model(WeightedGaussianModel::new(sigma_mu_sq()).unwrap());
+    let builder = base_builder(seed ^ 0xC4A1)
+        .with_cell_model(WeightedGaussianModel::new(sigma_mu_sq()).unwrap());
     let shared = Arc::new(Mutex::new(
         HVariance::new(M_PRIME)
             .unwrap()

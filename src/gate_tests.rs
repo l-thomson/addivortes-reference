@@ -474,9 +474,9 @@ fn explicit_default_selection_reproduces_default_chain() {
         ])
         .with_assigner(Arc::new(crate::extensions::distance::Euclidean))
         .with_inclusion(crate::extensions::inclusion::UniformInclusion::new(2))
-        .with_cell_model(crate::extensions::cell_model::GaussianCellModel::new(
-            sigma_mu_sq,
-        ).unwrap());
+        .with_cell_model(
+            crate::extensions::cell_model::GaussianCellModel::new(sigma_mu_sq).unwrap(),
+        );
 
     assert_eq!(
         default_bits,
@@ -526,9 +526,9 @@ fn builder_seam_route_matches_sampler_seam_route() {
     .with_scale_model(PinnedSigma::unit());
 
     let via_builder = crate::engine::builder::SamplerBuilder::new(quick_config(43))
-        .with_cell_model(crate::extensions::cell_model::WeightedGaussianModel::new(
-            sigma_mu_sq,
-        ).unwrap())
+        .with_cell_model(
+            crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
+        )
         .with_response_model(HalvedWeights)
         .with_scale_model(PinnedSigma::unit())
         .build(&x, &y)
@@ -595,9 +595,9 @@ fn h_addivortes_entry_recovers_heteroscedastic_structure() {
     let builder = crate::engine::builder::SamplerBuilder::new(
         AddiVortesConfig::new(2027).with_m(m).with_omega(0.5),
     )
-    .with_cell_model(crate::extensions::cell_model::WeightedGaussianModel::new(
-        sigma_mu_sq,
-    ).unwrap());
+    .with_cell_model(
+        crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
+    );
     let mut sampler =
         builder
             .build(&x, &y)
@@ -1166,10 +1166,9 @@ fn the_linear_family_at_q_one_reproduces_the_scalar_family() {
     // The cell prior the default assembles for this config: σ_μ = 0.5/(k√m).
     let sigma_mu_sq = crate::engine::scaler::sigma_mu_sq(3.0, 20);
     let linear = crate::engine::builder::SamplerBuilder::new(basis_config(3))
-        .with_cell_model(crate::extensions::basis::LinearGaussianModel::new(
-            sigma_mu_sq,
-            1,
-        ).unwrap())
+        .with_cell_model(
+            crate::extensions::basis::LinearGaussianModel::new(sigma_mu_sq, 1).unwrap(),
+        )
         .fit(&x, &y)
         .unwrap();
 

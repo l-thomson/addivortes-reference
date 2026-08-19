@@ -247,7 +247,8 @@ impl CoordSpec {
         Ok(match *self {
             CoordSpec::EuclideanNormal { sigma_c } => Arc::new(EuclideanNormal::new(
                 positive_finite("coords.sigma_c", sigma_c)?,
-            )?) as Arc<dyn CoordinateDistribution>,
+            )?)
+                as Arc<dyn CoordinateDistribution>,
             CoordSpec::WrappedNormal { sigma_c } => Arc::new(WrappedNormal::new(positive_finite(
                 "coords.sigma_c",
                 sigma_c,
@@ -412,9 +413,7 @@ impl InclusionSpec {
                 }
                 builder.with_inclusion(WeightedInclusion::new(weights))
             }
-            InclusionSpec::Dart { alpha } => {
-                builder.with_inclusion(DartInclusion::new(alpha, p)?)
-            }
+            InclusionSpec::Dart { alpha } => builder.with_inclusion(DartInclusion::new(alpha, p)?),
         })
     }
 }
@@ -556,10 +555,8 @@ pub enum MembershipSpec {
 impl MembershipSpec {
     fn apply(self, builder: SamplerBuilder) -> Result<SamplerBuilder> {
         Ok(match self {
-            MembershipSpec::Softmax { tau } => {
-                builder
-                    .with_membership(SoftmaxKernel::new(positive_finite("membership.tau", tau)?)?)
-            }
+            MembershipSpec::Softmax { tau } => builder
+                .with_membership(SoftmaxKernel::new(positive_finite("membership.tau", tau)?)?),
         })
     }
 }
