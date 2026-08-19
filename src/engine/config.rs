@@ -82,6 +82,11 @@ pub struct AddiVortesConfig {
     /// Count priors; `None` = `ShiftedPoissonBinomial`, the paper's
     /// shifted Poisson / shifted Binomial pair.
     pub(crate) count_priors: Option<Arc<dyn CountPriors>>,
+    /// Cell-value prior SD σ_μ, set directly (scaled space); `None` = the
+    /// k-rule σ_μ = 0.5/(k√m), or the family's own rule (BinaryProbit widens
+    /// to 3/(k√m)). Crate-internal: the dial a model file turns when its
+    /// derivation prescribes a σ_μ the k-rule cannot express.
+    pub(crate) cell_prior_sd: Option<f64>,
 }
 
 impl AddiVortesConfig {
@@ -112,6 +117,7 @@ impl AddiVortesConfig {
             response_model: None,
             scale_model: None,
             count_priors: None,
+            cell_prior_sd: None,
         }
     }
 
@@ -361,6 +367,17 @@ impl AddiVortesConfig {
         self
     }
 
+    /// The cell-value prior SD σ_μ, directly (last wins; scaled space; the
+    /// default is the k-rule σ_μ = 0.5/(k√m), and BinaryProbit's family
+    /// wiring widens to 3/(k√m)). The crate-internal width dial for model
+    /// files whose derivation prescribes σ_μ itself; when set it wins over
+    /// both the k-rule and the family rule, and `k` no longer reaches σ_μ.
+    #[must_use]
+    pub(crate) fn with_cell_prior_sd(mut self, sigma_mu: f64) -> Self {
+        self.cell_prior_sd = Some(sigma_mu);
+        self
+    }
+
     /// Fit `n_chains` independent chains of the same model (the
     /// multi-chain entry the convergence diagnostics consume:
     /// [`diagnostics::r_hat`](crate::diagnostics::r_hat) and friends take
@@ -441,6 +458,14 @@ impl AddiVortesConfig {
                 "lambda_c",
                 format!("must be finite and positive, got {}", self.lambda_c),
             );
+        }
+        if let Some(sd) = self.cell_prior_sd {
+            if !(sd.is_finite() && sd > 0.0) {
+                return bad(
+                    "cell_prior_sd",
+                    format!("must be finite and positive, got {sd}"),
+                );
+            }
         }
         if self.n_draws < 1 {
             return bad("draws", "must be at least 1".into());
@@ -529,6 +554,7 @@ impl PartialEq for AddiVortesConfig {
             response_model,
             scale_model,
             count_priors,
+            cell_prior_sd,
         } = self;
 
         let coords_equal = match (coords, &other.coords) {
@@ -562,6 +588,7 @@ impl PartialEq for AddiVortesConfig {
             && *thinning == other.thinning
             && *metrics == other.metrics
             && *family == other.family
+            && *cell_prior_sd == other.cell_prior_sd
     }
 }
 
@@ -635,6 +662,7 @@ mod tests {
                 "count_priors",
                 base().with_count_priors(ShiftedPoissonBinomial),
             ),
+            ("cell_prior_sd", base().with_cell_prior_sd(0.25)),
         ];
 
         assert_eq!(base(), base(), "a config must equal itself");
@@ -644,6 +672,28 @@ mod tests {
                 base(),
                 "changing `{field}` left the config comparing equal: it is missing from `PartialEq`"
             );
+        }
+    }
+
+    /// The dial validates like every other hyperparameter: never clamped,
+    /// rejected with the exact field name.
+    #[test]
+    fn cell_prior_sd_validates_like_any_hyperparameter() {
+        assert!(
+            AddiVortesConfig::new(1)
+                .with_cell_prior_sd(0.25)
+                .validate()
+                .is_ok()
+        );
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let err = AddiVortesConfig::new(1)
+                .with_cell_prior_sd(bad)
+                .validate()
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                AddiVortesError::InvalidHyperparameter { ref name, .. } if name == "cell_prior_sd"
+            ));
         }
     }
 }

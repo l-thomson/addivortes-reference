@@ -939,27 +939,65 @@ fn fit_sampler(mut sampler: Sampler, x: &Data, y: &[f64]) -> Result<FittedAddiVo
         sigma_sqs.push(draw.sigma_sq);
         draws.push(draw.tessellations.to_vec());
     }
+    FittedAddiVortes::from_parts(sampler, x, y, sigma_sqs, draws)
+}
 
-    let posterior = PosteriorSamples { sigma_sqs, draws };
-    let (config, scaler, warnings, assigner) = sampler.into_fitted_parts();
+impl FittedAddiVortes {
+    /// The "keep" verb: package draws collected over a caller-driven
+    /// [`Sampler`] loop as a self-contained fitted model. Crate-internal:
+    /// this is the path a model file takes when its sweep needs work between
+    /// steps that `fit` cannot express (an augmentation drawn in the model
+    /// file, an outer Gibbs block), so the burn-in/thinning loop lives with
+    /// the caller and only the packaging is shared. `fit_sampler` itself
+    /// finishes through here, so the two paths cannot drift.
+    ///
+    /// `sigma_sqs` and `draws` are the kept sweeps, in order, exactly as
+    /// [`Sampler::step`] returned them; `x`/`y` are the training data, used
+    /// once for the in-sample RMSE and not retained.
+    pub(crate) fn from_parts(
+        sampler: Sampler,
+        x: &Data,
+        y: &[f64],
+        sigma_sqs: Vec<f64>,
+        draws: Vec<Vec<Tessellation>>,
+    ) -> Result<Self> {
+        if draws.is_empty() {
+            return Err(AddiVortesError::InvalidHyperparameter {
+                name: "draws".into(),
+                reason: "a fitted model needs at least one kept draw".into(),
+            });
+        }
+        if sigma_sqs.len() != draws.len() {
+            return Err(AddiVortesError::InvalidHyperparameter {
+                name: "draws".into(),
+                reason: format!(
+                    "{} sigma-squared values for {} kept draws",
+                    sigma_sqs.len(),
+                    draws.len()
+                ),
+            });
+        }
+        let posterior = PosteriorSamples { sigma_sqs, draws };
+        let (config, scaler, warnings, assigner) = sampler.into_fitted_parts();
 
-    let mut model = FittedAddiVortes {
-        posterior,
-        scaler,
-        config,
-        assigner,
-        warnings,
-        in_sample_rmse: 0.0,
-    };
-    // Response-scale RMSE of the posterior mean on the training data.
-    let predictions = model.predict(x)?;
-    let mut sum_sq = 0.0_f64;
-    for (prediction, &observed) in predictions.iter().zip(y) {
-        let residual = prediction - observed;
-        sum_sq += residual * residual;
+        let mut model = FittedAddiVortes {
+            posterior,
+            scaler,
+            config,
+            assigner,
+            warnings,
+            in_sample_rmse: 0.0,
+        };
+        // Response-scale RMSE of the posterior mean on the training data.
+        let predictions = model.predict(x)?;
+        let mut sum_sq = 0.0_f64;
+        for (prediction, &observed) in predictions.iter().zip(y) {
+            let residual = prediction - observed;
+            sum_sq += residual * residual;
+        }
+        model.in_sample_rmse = (sum_sq / y.len() as f64).sqrt();
+        Ok(model)
     }
-    model.in_sample_rmse = (sum_sq / y.len() as f64).sqrt();
-    Ok(model)
 }
 
 /// Save/load of the fitted model (`serde` feature): a versioned on-disk form
@@ -1041,10 +1079,16 @@ mod persist {
                 response_model,
                 scale_model,
                 count_priors,
+                cell_prior_sd,
             } = &self.config;
 
             // Not portable: an arbitrary trait object has no serialisable form.
-            let has_custom_extension = move_set.is_some()
+            // The cell-prior dial is refused on the same channel: it is a
+            // crate-internal fit-side hook only a model file can set, and a
+            // model carrying it is that model file's product, rebuilt in code
+            // rather than loaded through the public loader.
+            let has_custom_extension = cell_prior_sd.is_some()
+                || move_set.is_some()
                 || coords.is_some()
                 || assigner.is_some()
                 || inclusion.is_some()

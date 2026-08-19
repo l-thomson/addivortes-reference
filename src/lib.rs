@@ -154,6 +154,10 @@ pub mod config_spec;
 // is re-exported at the crate root below so import paths stay short.
 mod extensions;
 
+// The model-files surface, one file per model. Crate-private until the models
+// surface lands for real (no public-API change).
+mod models;
+
 pub use engine::mathsfn;
 
 pub use engine::config::AddiVortesConfig;
