@@ -7,6 +7,7 @@
 //! per-observation likelihood `ẽᵢ ~ N(0, s²)`, and the ensemble composes
 //! multiplicatively.
 
+use crate::engine::error::{Result, require_positive_finite};
 use crate::engine::mathsfn;
 use crate::extensions::cell_model::{CellModel, CellStats};
 use crate::extensions::scale::sigma_sq_gamma_params;
@@ -77,9 +78,14 @@ impl InvChiSqCellModel {
     /// An inverse-χ² cell model with prior s² ~ χ⁻²(ν′, λ′) per cell
     /// (scaled space; ν′/λ′ from the H paper §3.3 calibration,
     /// [`h_variance_prior`](crate::extensions::scale::h_variance_prior)).
-    pub fn new(nu: f64, lambda: f64) -> Self {
-        debug_assert!(nu > 0.0 && lambda > 0.0);
-        Self { nu, lambda }
+    /// Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless both are finite and strictly positive.
+    pub fn new(nu: f64, lambda: f64) -> Result<Self> {
+        Ok(Self {
+            nu: require_positive_finite("nu", nu)?,
+            lambda: require_positive_finite("lambda", lambda)?,
+        })
     }
 }
 
@@ -156,7 +162,7 @@ mod tests {
     fn marginal_terms_match_the_hand_derived_eq_10() {
         // ν′ = 4, λ′ = 0.5; one cell with n = 3, S = 1.2:
         // (2)·ln(1) − lnΓ(2) + lnΓ(3.5) − 3.5·ln(1.6).
-        let model = InvChiSqCellModel::new(4.0, 0.5);
+        let model = InvChiSqCellModel::new(4.0, 0.5).unwrap();
         let mut stats = InvChiSqStats::default();
         for v in [0.5, 0.3, 0.4] {
             stats.record(v, 1.0);
@@ -175,7 +181,7 @@ mod tests {
         // n = 0, S = 0: s² = ν′λ′/χ²_{ν′}. Check the sample mean against the
         // prior mean ν′λ′/(ν′−2) over many draws (ν′ = 8, λ′ = 0.4:
         // mean = 3.2/6).
-        let model = InvChiSqCellModel::new(8.0, 0.4);
+        let model = InvChiSqCellModel::new(8.0, 0.4).unwrap();
         let stats = vec![InvChiSqStats::default()];
         let mut rng = ChaCha8Rng::from_seed([5; 32]);
         let n_draws = 200_000;
@@ -194,7 +200,7 @@ mod tests {
     fn posterior_draw_concentrates_on_the_data_scale() {
         // Large n at constant ẽ² = 0.09: the posterior mean of s² approaches
         // 0.09 (the ML variance of N(0, s²) data with Σẽ²/n = 0.09).
-        let model = InvChiSqCellModel::new(4.0, 1.0);
+        let model = InvChiSqCellModel::new(4.0, 1.0).unwrap();
         let mut stats = InvChiSqStats::default();
         for _ in 0..5000 {
             stats.record(0.09, 1.0);

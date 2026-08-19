@@ -1,5 +1,6 @@
 //! The paper's Euclidean coordinate law: N(0, σ_c²) (paper §2.3.2).
 
+use crate::engine::error::{Result, require_positive_finite};
 use crate::engine::mathsfn;
 use crate::extensions::coord::CoordinateDistribution;
 
@@ -10,11 +11,13 @@ pub struct EuclideanNormal {
 }
 
 impl EuclideanNormal {
-    /// N(0, σ_c²) with standard deviation `sigma_c` (must be positive;
-    /// validated by the config's σ_c hyperparameter check).
-    pub fn new(sigma_c: f64) -> Self {
-        debug_assert!(sigma_c > 0.0);
-        Self { sigma_c }
+    /// N(0, σ_c²) with standard deviation `sigma_c` (scaled space). Fails
+    /// with [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless `sigma_c` is finite and strictly positive.
+    pub fn new(sigma_c: f64) -> Result<Self> {
+        Ok(Self {
+            sigma_c: require_positive_finite("sigma_c", sigma_c)?,
+        })
     }
 }
 

@@ -42,6 +42,7 @@
 //! the exact-integration oracle below pins the update's invariant
 //! distribution against quadrature on the simplex.
 
+use crate::engine::error::{Result, require_at_least_one, require_positive_finite};
 use crate::engine::mathsfn;
 use crate::extensions::inclusion::{InclusionModel, InclusionUsage, elementary_symmetric};
 use crate::extensions::moves::uniform_f64;
@@ -65,16 +66,16 @@ impl DartInclusion {
     /// A DART model over `p` covariates with concentration `alpha` (the
     /// Dirichlet prior is s ~ Dirichlet(α/p, …, α/p); smaller α concentrates
     /// mass on fewer covariates). The chain starts at the uniform weights
-    /// (the prior mean).
-    pub fn new(alpha: f64, p: usize) -> Self {
-        assert!(
-            alpha.is_finite() && alpha > 0.0 && p >= 1,
-            "alpha must be finite and positive over at least one covariate"
-        );
-        Self {
+    /// (the prior mean). Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless `alpha` is finite and strictly positive and `p ≥ 1`.
+    pub fn new(alpha: f64, p: usize) -> Result<Self> {
+        let alpha = require_positive_finite("alpha", alpha)?;
+        let p = require_at_least_one("p", p)?;
+        Ok(Self {
             alpha,
             weights: vec![1.0 / p as f64; p],
-        }
+        })
     }
 
     /// The Dirichlet concentration α: the prior pseudo-count spread across
@@ -192,8 +193,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dart_rejects_out_of_domain_arguments() {
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                DartInclusion::new(bad, 3),
+                Err(crate::AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "alpha"
+            ));
+        }
+        assert!(matches!(
+            DartInclusion::new(1.0, 0),
+            Err(crate::AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "p"
+        ));
+    }
+
+    #[test]
     fn dart_starts_uniform_and_adapts_toward_used_covariates() {
-        let mut model = DartInclusion::new(1.0, 4);
+        let mut model = DartInclusion::new(1.0, 4).unwrap();
         assert!(model.weights().iter().all(|w| (w - 0.25).abs() < 1e-15));
         // Heavy usage of covariate 2, none elsewhere; d_t = 1 subsets keep
         // the correction mild.
@@ -269,7 +284,7 @@ mod tests {
         }
         let exact = [m0 / mass, m1 / mass, m2 / mass, mmax / mass];
 
-        let mut model = DartInclusion::new(1.5, 3);
+        let mut model = DartInclusion::new(1.5, 3).unwrap();
         let mut rng = ChaCha8Rng::from_seed([7; 32]);
         let sweeps = 1_000_000_usize;
         let burn = 2_000_usize;
@@ -305,7 +320,7 @@ mod tests {
         let mut usage = InclusionUsage::new(3);
         usage.record(0);
         usage.record_subset_size(1);
-        let model = DartInclusion::new(2.0, 3);
+        let model = DartInclusion::new(2.0, 3).unwrap();
         let e = elementary_symmetric(model.weights(), 1);
         // e_1(normalised s) = 1 exactly.
         assert!((e[1] - 1.0).abs() < 1e-12);

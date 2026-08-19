@@ -2068,7 +2068,7 @@ mod tests {
                 ),
                 (
                     "coords",
-                    quick_config().with_coords(vec![Arc::new(EuclideanNormal::new(0.8))]),
+                    quick_config().with_coords(vec![Arc::new(EuclideanNormal::new(0.8).unwrap())]),
                 ),
                 ("assigner", quick_config().with_distance(Manhattan)),
                 (
@@ -2077,7 +2077,7 @@ mod tests {
                 ),
                 (
                     "cell_model",
-                    quick_config().with_cell_model(GaussianCellModel::new(0.01)),
+                    quick_config().with_cell_model(GaussianCellModel::new(0.01).unwrap()),
                 ),
                 (
                     "response_model",
@@ -2089,7 +2089,7 @@ mod tests {
                 ),
                 (
                     "membership",
-                    quick_config().with_membership(SoftmaxKernel::new(0.1)),
+                    quick_config().with_membership(SoftmaxKernel::new(0.1).unwrap()),
                 ),
                 (
                     "count_priors",

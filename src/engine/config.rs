@@ -640,22 +640,22 @@ mod tests {
             ),
             (
                 "coords",
-                base().with_coords(vec![Arc::new(EuclideanNormal::new(0.4))]),
+                base().with_coords(vec![Arc::new(EuclideanNormal::new(0.4).unwrap())]),
             ),
             ("assigner", base().with_distance(Manhattan)),
             (
                 "membership",
-                base().with_membership(SoftmaxKernel::new(0.5)),
+                base().with_membership(SoftmaxKernel::new(0.5).unwrap()),
             ),
             ("inclusion", base().with_inclusion(UniformInclusion::new(2))),
             (
                 "cell_model",
-                base().with_cell_model(GaussianCellModel::new(0.1)),
+                base().with_cell_model(GaussianCellModel::new(0.1).unwrap()),
             ),
             ("basis", base().with_cell_basis(LinearBasis::new(vec![0]))),
             (
                 "response_model",
-                base().with_response_model(RobustTStep::new(4.0)),
+                base().with_response_model(RobustTStep::new(4.0).unwrap()),
             ),
             ("scale_model", base().with_scale_model(PinnedSigma::unit())),
             (

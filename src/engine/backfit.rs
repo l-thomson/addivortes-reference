@@ -741,7 +741,7 @@ mod tests {
         mathsfn::cholesky_solve_transposed(&l, b, &mut z_draw);
         let dense_draw: Vec<f64> = mean.iter().zip(&z_draw).map(|(m, v)| m + v).collect();
 
-        let model = crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq);
+        let model = crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap();
         let mut stats = vec![crate::extensions::cell_model::WeightedGaussianStats::default(); b];
         for i in 0..assignment.len() {
             stats[assignment[i]].record(residuals[i], weights[i]);
@@ -768,7 +768,7 @@ mod tests {
             .collect();
 
         // Block side: the linear family per cell.
-        let model = LinearGaussianModel::new(sigma_beta_sq, q);
+        let model = LinearGaussianModel::new(sigma_beta_sq, q).unwrap();
         let mut stats = vec![crate::extensions::basis::LinearCellStats::default(); b];
         for i in 0..assignment.len() {
             stats[assignment[i]].record_row(&basis[i], residuals[i], weights[i]);
@@ -810,7 +810,7 @@ mod tests {
         let assigner = crate::extensions::distance::default_assigner(vec![
             crate::engine::data::Metric::Euclidean,
         ]);
-        let kernel = crate::extensions::membership::SoftmaxKernel::new(0.5);
+        let kernel = crate::extensions::membership::SoftmaxKernel::new(0.5).unwrap();
         let memberships =
             compute_memberships(assigner.as_ref(), &kernel, &x, &tessellation).unwrap();
         for i in 0..3 {

@@ -114,7 +114,9 @@ fn basis_design(seed: u64) -> Data {
 
 fn coord_laws() -> Vec<Arc<dyn CoordinateDistribution>> {
     (0..P)
-        .map(|_| Arc::new(EuclideanNormal::new(SIGMA_C)) as Arc<dyn CoordinateDistribution>)
+        .map(|_| {
+            Arc::new(EuclideanNormal::new(SIGMA_C).unwrap()) as Arc<dyn CoordinateDistribution>
+        })
         .collect()
 }
 
@@ -417,7 +419,7 @@ fn paper_gaussian_passes_the_externalised_battery() {
 #[ignore = "stochastic battery: calibration gate CI leg (run with --ignored under the determinism profile)"]
 fn linear_cells_q1_pass_the_externalised_battery() {
     let outcomes = run_scalar_gaussian_battery(0xACC0_0004, None, |config| {
-        config.with_cell_model(LinearGaussianModel::new(sigma_mu_sq(), 1))
+        config.with_cell_model(LinearGaussianModel::new(sigma_mu_sq(), 1).unwrap())
     });
     assert_green("linear-q1", &outcomes);
 }
@@ -531,7 +533,7 @@ fn run_basis_battery_inner(seed: u64, use_basis: bool) -> Vec<GewekeOutcome> {
     let mut sc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C);
     let sigma_sq0 = draw_inv_chi_sq(NU, LAMBDA, &mut sc_rng);
     let config = base_config(seed ^ 0xC4A1)
-        .with_cell_model(LinearGaussianModel::new(sigma_mu_sq(), q))
+        .with_cell_model(LinearGaussianModel::new(sigma_mu_sq(), q).unwrap())
         .with_cell_basis(LinearBasis::new(vec![0]));
     let sampler = pinned_sampler(config, &x, y_init());
     let mut sc = GaussianSc {
@@ -577,7 +579,7 @@ fn robust_t_with_unweighted_sigma_goes_red() {
         run_scalar_gaussian_battery(0xACC0_0008, Some(T_DF), |config| {
             config
                 .with_response_family(ResponseFamily::RobustT { df: T_DF })
-                .with_scale_model(GlobalSigma::new(NU, LAMBDA))
+                .with_scale_model(GlobalSigma::new(NU, LAMBDA).unwrap())
         })
     };
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
@@ -666,7 +668,8 @@ fn dart_mh_correction_passes_the_externalised_battery() {
 
     let mut sc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C);
     let sigma_sq0 = draw_inv_chi_sq(NU, LAMBDA, &mut sc_rng);
-    let config = base_config(seed ^ 0xC4A1).with_inclusion(DartInclusion::new(DART_ALPHA, P));
+    let config =
+        base_config(seed ^ 0xC4A1).with_inclusion(DartInclusion::new(DART_ALPHA, P).unwrap());
     let sampler = pinned_sampler(config, &x, y_init());
     let mut sc = GaussianSc {
         sampler,
@@ -735,7 +738,7 @@ fn soft_membership_passes_the_externalised_battery() {
     let coord_dists = coord_laws();
     let weights = [1.0_f64; P];
     let sigma_mu = sigma_mu_sq().sqrt();
-    let kernel = SoftmaxKernel::new(TAU);
+    let kernel = SoftmaxKernel::new(TAU).unwrap();
 
     let mut mc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6E77);
     let mut mc_draw = || {
@@ -790,7 +793,7 @@ fn soft_membership_passes_the_externalised_battery() {
 
     let mut sc_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5C5C);
     let sigma_sq0 = draw_inv_chi_sq(NU, LAMBDA, &mut sc_rng);
-    let config = base_config(seed ^ 0xC4A1).with_membership(SoftmaxKernel::new(TAU));
+    let config = base_config(seed ^ 0xC4A1).with_membership(SoftmaxKernel::new(TAU).unwrap());
     let sampler = pinned_sampler(config, &x, y_init());
     let mut sc = GaussianSc {
         sampler,
@@ -1127,10 +1130,13 @@ fn h_addivortes_passes_the_externalised_battery() {
     // The H sampler: weighted-Gaussian mean cells (the per-observation
     // precisions demand the weighted statistic) + the shared variance
     // ensemble on the ScaleModel seam.
-    let config =
-        base_config(seed ^ 0xC4A1).with_cell_model(WeightedGaussianModel::new(sigma_mu_sq()));
+    let config = base_config(seed ^ 0xC4A1)
+        .with_cell_model(WeightedGaussianModel::new(sigma_mu_sq()).unwrap());
     let shared = Arc::new(Mutex::new(
-        HVariance::new(M_PRIME).with_prior(NU_PRIME, LAMBDA_PRIME),
+        HVariance::new(M_PRIME)
+            .unwrap()
+            .with_prior(NU_PRIME, LAMBDA_PRIME)
+            .unwrap(),
     ));
     let mut sampler = pinned_sampler(config, &x, y_init()).with_scale_model(SharedHVariance {
         inner: Arc::clone(&shared),
@@ -1157,7 +1163,7 @@ fn h_addivortes_passes_the_externalised_battery() {
 fn the_basis_leg_sampler_actually_carries_a_q2_payload() {
     let x = basis_design(0xACC0_0009);
     let config = base_config(1)
-        .with_cell_model(LinearGaussianModel::new(sigma_mu_sq(), 2))
+        .with_cell_model(LinearGaussianModel::new(sigma_mu_sq(), 2).unwrap())
         .with_cell_basis(LinearBasis::new(vec![0]));
     let mut sampler = pinned_sampler(config, &x, y_init());
     let draw = sampler.step().expect("a basis sweep runs");

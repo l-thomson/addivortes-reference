@@ -147,9 +147,8 @@ def test_every_point_is_reachable_as_a_payload(point, payload):
 
 
 def test_dart_alpha_is_an_error_not_a_process_abort():
-    # `DartInclusion::new` panics on a non-positive alpha. Reaching that panic
-    # from a Python dict would abort the interpreter, so the core validates the
-    # value first. If this ever regresses, the test run dies rather than fails.
+    # A non-positive alpha is rejected under the spec key before any
+    # constructor sees it.
     with pytest.raises(AddiVortesError, match="alpha"):
         AddiVortes(seed=1, inclusion={"type": "dart", "alpha": 0.0})
 

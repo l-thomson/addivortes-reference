@@ -148,7 +148,7 @@ fn main() -> addivortes::Result<()> {
         .with_burn_in(20)
         .with_draws(30)
         .with_scale_model(make())
-        .with_cell_model(WeightedGaussianModel::new(sigma_mu * sigma_mu))
+        .with_cell_model(WeightedGaussianModel::new(sigma_mu * sigma_mu)?)
         .fit(&x, &y)?;
     println!(
         "template_scale: all checks passed; known-profile fit RMSE {:.4}",

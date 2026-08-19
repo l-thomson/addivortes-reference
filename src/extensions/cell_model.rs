@@ -199,6 +199,29 @@ mod tests {
     use super::*;
     use crate::test_support::{assert_abs_eq, assert_rel_eq};
 
+    fn rejects_as(result: Result<impl std::fmt::Debug, AddiVortesError>, argument: &str) {
+        assert!(
+            matches!(
+                &result,
+                Err(AddiVortesError::InvalidHyperparameter { name, .. }) if name == argument
+            ),
+            "expected `{argument}` to be rejected, got {result:?}"
+        );
+    }
+
+    /// Every shelf cell model checks its prior arguments in every build profile.
+    #[test]
+    fn cell_model_constructors_reject_out_of_domain_arguments() {
+        for bad in [0.0, -0.5, f64::NAN, f64::INFINITY] {
+            rejects_as(GaussianCellModel::new(bad), "sigma_mu_sq");
+            rejects_as(WeightedGaussianModel::new(bad), "sigma_mu_sq");
+            rejects_as(InvChiSqCellModel::new(bad, 0.5), "nu");
+            rejects_as(InvChiSqCellModel::new(6.0, bad), "lambda");
+            rejects_as(LinearGaussianModel::new(bad, 2), "sigma_beta_sq");
+        }
+        rejects_as(LinearGaussianModel::new(0.5, 0), "q");
+    }
+
     // CI leg: fast-PR (deterministic).
 
     #[test]
@@ -224,7 +247,7 @@ mod tests {
         let residuals = [1.0, 2.0, 3.0, 4.0];
         let sigma_sq = 2.0;
         let sigma_mu_sq = 0.5;
-        let model = GaussianCellModel::new(sigma_mu_sq);
+        let model = GaussianCellModel::new(sigma_mu_sq).unwrap();
         let kernel = KernelOf(model);
 
         let two = kernel.accumulate(&[0, 0, 1, 1], &residuals, None, 2, None);
@@ -255,8 +278,8 @@ mod tests {
     fn weighted_stats_at_unit_weights_are_bit_identical() {
         let residuals = [0.3, -1.2, 0.7, 2.2, -0.4];
         let assignment = [0usize, 1, 0, 2, 1];
-        let gaussian = KernelOf(GaussianCellModel::new(0.02));
-        let weighted = KernelOf(WeightedGaussianModel::new(0.02));
+        let gaussian = KernelOf(GaussianCellModel::new(0.02).unwrap());
+        let weighted = KernelOf(WeightedGaussianModel::new(0.02).unwrap());
 
         let g_stats = gaussian.accumulate(&assignment, &residuals, None, 3, None);
         let w_stats = weighted.accumulate(&assignment, &residuals, None, 3, None);
@@ -328,7 +351,7 @@ mod tests {
             crate::extensions::moves::MoveSetBuilder::stone_gosling()
                 .build()
                 .unwrap(),
-            GaussianCellModel::new(sigma_mu_sq),
+            GaussianCellModel::new(sigma_mu_sq).unwrap(),
         )
         .unwrap();
         assert_eq!(default_bits, chain_bits(via_seam, 8));
@@ -349,7 +372,7 @@ mod tests {
             crate::extensions::moves::MoveSetBuilder::stone_gosling()
                 .build()
                 .unwrap(),
-            WeightedGaussianModel::new(sigma_mu_sq),
+            WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
         )
         .unwrap();
         assert_eq!(default_bits, chain_bits(via_weighted, 8));
@@ -411,7 +434,7 @@ mod tests {
             crate::extensions::moves::MoveSetBuilder::stone_gosling()
                 .build()
                 .unwrap(),
-            GaussianCellModel::new(sigma_mu_sq),
+            GaussianCellModel::new(sigma_mu_sq).unwrap(),
         )
         .unwrap()
         .with_response_model(AlbertChibProbit { labels })
@@ -465,7 +488,7 @@ mod tests {
             crate::extensions::moves::MoveSetBuilder::stone_gosling()
                 .build()
                 .unwrap(),
-            WeightedGaussianModel::new(sigma_mu_sq),
+            WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
         )
         .unwrap()
         .with_response_model(FixedPrecisionWeights { s_sq })
@@ -492,7 +515,7 @@ mod tests {
                 crate::extensions::moves::MoveSetBuilder::stone_gosling()
                     .build()
                     .unwrap(),
-                LinearGaussianModel::new(sigma_mu_sq, 1),
+                LinearGaussianModel::new(sigma_mu_sq, 1).unwrap(),
             )
             .unwrap()
         };

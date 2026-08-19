@@ -66,9 +66,9 @@ fn main() -> addivortes::Result<()> {
     // A ModelCtx carries the priors the moves price through. The sampler builds
     // one per sweep; here we build one directly, to inspect the pricing before
     // committing it to a fit.
-    let coord_dists: Vec<Arc<dyn CoordinateDistribution>> = (0..5)
-        .map(|_| Arc::new(EuclideanNormal::new(0.8)) as Arc<_>)
-        .collect();
+    let law = Arc::new(EuclideanNormal::new(0.8)?);
+    let coord_dists: Vec<Arc<dyn CoordinateDistribution>> =
+        (0..5).map(|_| Arc::clone(&law) as Arc<_>).collect();
     let weights = vec![1.0; 5];
     let ctx =
         ModelCtx::new(1.0, 2.0, 25.0, 0.01, 5, &coord_dists, &weights).with_count_priors(&priors);

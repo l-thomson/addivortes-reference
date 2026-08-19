@@ -270,8 +270,8 @@ fn all_eighteen_error_variants_are_reachable() {
             Ok(vec![0; x.n_rows()])
         }
     }
-    let mut hard_only =
-        quick_config(6).with_membership(crate::extensions::membership::SoftmaxKernel::new(0.1));
+    let mut hard_only = quick_config(6)
+        .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap());
     hard_only.assigner = Some(Arc::new(HardOnlyAssigner));
     hit(
         "MembershipUnsupported",
@@ -407,7 +407,7 @@ fn hand_applied_ratio_mutants_are_killed_by_value_oracles() {
     // (the coupling: oracle == implementation, oracle != mutant).
     let dists: Vec<Arc<dyn CoordinateDistribution>> = (0..5)
         .map(|_| {
-            Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8))
+            Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap())
                 as Arc<dyn CoordinateDistribution>
         })
         .collect();
@@ -471,9 +471,9 @@ fn explicit_default_selection_reproduces_default_chain() {
     let paper_set = Arc::new(MoveSetBuilder::stone_gosling().build().unwrap());
     config.move_set = Some(paper_set);
     config.coords = Some(vec![
-        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8))
+        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap())
             as Arc<dyn CoordinateDistribution>,
-        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8)) as Arc<_>,
+        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap()) as Arc<_>,
     ]);
     config.assigner = Some(Arc::new(crate::extensions::distance::Euclidean));
     config.inclusion = Some(Arc::new(
@@ -481,7 +481,7 @@ fn explicit_default_selection_reproduces_default_chain() {
     ));
     let sigma_mu_sq = crate::engine::scaler::sigma_mu_sq(3.0, 3);
     config.cell_model = Some(Arc::new(
-        crate::extensions::cell_model::GaussianCellModel::new(sigma_mu_sq),
+        crate::extensions::cell_model::GaussianCellModel::new(sigma_mu_sq).unwrap(),
     ));
 
     assert_eq!(
@@ -525,7 +525,7 @@ fn config_seam_route_matches_sampler_seam_route() {
         &x,
         &y,
         MoveSetBuilder::stone_gosling().build().unwrap(),
-        crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq),
+        crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
     )
     .unwrap()
     .with_response_model(HalvedWeights)
@@ -533,7 +533,7 @@ fn config_seam_route_matches_sampler_seam_route() {
 
     let mut config = quick_config(43);
     config.cell_model = Some(Arc::new(
-        crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq),
+        crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
     ));
     config.response_model = Some(Arc::new(HalvedWeights));
     config.scale_model = Some(Arc::new(PinnedSigma::unit()));
@@ -549,7 +549,7 @@ fn wrong_length_coords_error_at_the_fit_boundary() {
     let (x, y) = small_xy();
     let mut config = quick_config(47);
     config.coords = Some(vec![
-        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8))
+        Arc::new(crate::extensions::coord::EuclideanNormal::new(0.8).unwrap())
             as Arc<dyn CoordinateDistribution>,
     ]);
     let err = crate::Sampler::new(config, &x, &y).unwrap_err();
@@ -594,14 +594,14 @@ fn h_addivortes_entry_recovers_heteroscedastic_structure() {
     let m_prime = 10;
     let sigma_mu_sq = crate::engine::scaler::sigma_mu_sq(3.0, m);
     let shared = std::sync::Arc::new(std::sync::Mutex::new(
-        crate::extensions::scale::HVariance::new(m_prime),
+        crate::extensions::scale::HVariance::new(m_prime).unwrap(),
     ));
     let config = AddiVortesConfig::new(2027)
         .with_m(m)
         .with_omega(0.5)
-        .with_cell_model(crate::extensions::cell_model::WeightedGaussianModel::new(
-            sigma_mu_sq,
-        ));
+        .with_cell_model(
+            crate::extensions::cell_model::WeightedGaussianModel::new(sigma_mu_sq).unwrap(),
+        );
     let mut sampler = crate::Sampler::new(config, &x, &y)
         .unwrap()
         .with_scale_model(crate::test_support::SharedHVariance {
@@ -742,7 +742,7 @@ fn soft_membership_chains_are_reproducible_and_fit() {
             .with_omega(0.5)
             .with_burn_in(150)
             .with_draws(100)
-            .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.05))
+            .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.05).unwrap())
     };
     let chain_bits = |seed: u64| -> Vec<u64> {
         let mut sampler = crate::Sampler::new(config(seed), &x, &y).unwrap();
@@ -775,7 +775,7 @@ fn soft_membership_chains_are_reproducible_and_fit() {
 #[test]
 fn soft_membership_cache_matches_fresh_recompute_bitwise() {
     let (x, y) = small_xy();
-    let kernel = crate::extensions::membership::SoftmaxKernel::new(0.1);
+    let kernel = crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap();
     let config = quick_config(11).with_membership(kernel);
     let mut sampler = crate::Sampler::new(config, &x, &y).unwrap();
     for _ in 0..30 {
@@ -789,7 +789,7 @@ fn soft_membership_cache_matches_fresh_recompute_bitwise() {
         let tessellation = sampler.tessellations_for_tests()[j].clone();
         let fresh = crate::engine::backfit::compute_memberships(
             assigner.as_ref(),
-            &crate::extensions::membership::SoftmaxKernel::new(0.1),
+            &crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap(),
             sampler.design_for_tests(),
             &tessellation,
         )
@@ -806,7 +806,7 @@ fn soft_membership_cache_matches_fresh_recompute_bitwise() {
 #[test]
 fn soft_predictions_match_hand_computed_membership_sums() {
     let (x, y) = small_xy();
-    let kernel = crate::extensions::membership::SoftmaxKernel::new(0.1);
+    let kernel = crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap();
     let config = quick_config(13)
         .with_burn_in(20)
         .with_draws(10)
@@ -824,7 +824,7 @@ fn soft_predictions_match_hand_computed_membership_sums() {
         for tessellation in draw.tessellations {
             let membership = crate::engine::backfit::compute_memberships(
                 assigner.as_ref(),
-                &crate::extensions::membership::SoftmaxKernel::new(0.1),
+                &crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap(),
                 &x_enc,
                 tessellation,
             )
@@ -1118,7 +1118,7 @@ fn basis_config(seed: u64) -> AddiVortesConfig {
 fn basis_payload_with_q_above_one_fits_and_predicts() {
     let (x, y) = basis_fixture(120);
     let fitted = basis_config(11)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2))
+        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
         .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
         .fit(&x, &y)
         .expect("a q = 2 basis payload must fit");
@@ -1141,7 +1141,7 @@ fn linear_cells_beat_constant_cells_on_a_locally_linear_surface() {
     let (x, y) = basis_fixture(200);
     let scalar = basis_config(7).fit(&x, &y).unwrap();
     let basis = basis_config(7)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2))
+        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
         .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
         .fit(&x, &y)
         .unwrap();
@@ -1163,7 +1163,7 @@ fn the_linear_family_at_q_one_reproduces_the_scalar_family() {
     // The cell prior the default assembles for this config: σ_μ = 0.5/(k√m).
     let sigma_mu_sq = crate::engine::scaler::sigma_mu_sq(3.0, 20);
     let linear = basis_config(3)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(sigma_mu_sq, 1))
+        .with_cell_model(crate::basis::LinearGaussianModel::new(sigma_mu_sq, 1).unwrap())
         .fit(&x, &y)
         .unwrap();
 
@@ -1184,7 +1184,7 @@ fn basis_and_payload_must_arrive_together_and_agree() {
 
     // A basis payload with no basis.
     let err = basis_config(1)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2))
+        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
         .fit(&x, &y)
         .unwrap_err();
     assert!(
@@ -1204,7 +1204,7 @@ fn basis_and_payload_must_arrive_together_and_agree() {
 
     // q disagreement between the payload and the basis.
     let err = basis_config(1)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 3))
+        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 3).unwrap())
         .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
         .fit(&x, &y)
         .unwrap_err();
@@ -1215,7 +1215,7 @@ fn basis_and_payload_must_arrive_together_and_agree() {
 
     // A basis column the encoded design does not have.
     let err = basis_config(1)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2))
+        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
         .with_cell_basis(crate::basis::LinearBasis::new(vec![9]))
         .fit(&x, &y)
         .unwrap_err();
@@ -1230,9 +1230,9 @@ fn basis_and_payload_must_arrive_together_and_agree() {
 fn a_basis_payload_and_soft_membership_are_refused() {
     let (x, y) = basis_fixture(40);
     let err = basis_config(1)
-        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2))
+        .with_cell_model(crate::basis::LinearGaussianModel::new(0.05, 2).unwrap())
         .with_cell_basis(crate::basis::LinearBasis::new(vec![0]))
-        .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.1))
+        .with_membership(crate::extensions::membership::SoftmaxKernel::new(0.1).unwrap())
         .fit(&x, &y)
         .unwrap_err();
     assert!(

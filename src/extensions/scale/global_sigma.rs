@@ -1,5 +1,6 @@
 //! The global σ² Gibbs draw: the paper's scale model, and the fit-time default.
 
+use crate::engine::error::{Result, require_non_negative_finite, require_positive_finite};
 use crate::extensions::scale::{ScaleCtx, ScaleModel, sigma_sq_gamma_params};
 
 /// The built-in scale model: the global σ² Gibbs draw,
@@ -13,14 +14,19 @@ pub struct GlobalSigma {
 }
 
 impl GlobalSigma {
-    /// A global-σ² model with prior degrees of freedom ν and calibrated λ.
-    /// σ² starts at 1.0: never read before the first update.
-    pub fn new(nu: f64, lambda: f64) -> Self {
-        Self {
-            nu,
-            lambda,
+    /// A global-σ² model with prior degrees of freedom ν and calibrated λ
+    /// (scaled space). σ² starts at 1.0: never read before the first update.
+    /// Fails with
+    /// [`AddiVortesError::InvalidHyperparameter`](crate::AddiVortesError::InvalidHyperparameter)
+    /// unless ν is finite and strictly positive and λ is finite and
+    /// non-negative (λ = 0 is the zero-residual calibration; the draw stays
+    /// well-defined under it).
+    pub fn new(nu: f64, lambda: f64) -> Result<Self> {
+        Ok(Self {
+            nu: require_positive_finite("nu", nu)?,
+            lambda: require_non_negative_finite("lambda", lambda)?,
             sigma_sq: 1.0,
-        }
+        })
     }
 }
 

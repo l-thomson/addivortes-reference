@@ -119,8 +119,8 @@ fn main() -> addivortes::Result<()> {
         .with_burn_in(20)
         .with_draws(30)
         .with_response_model(ReplicateMeans { counts })
-        .with_cell_model(WeightedGaussianModel::new(sigma_mu * sigma_mu))
-        .with_scale_model(PinnedSigma::new(0.04))
+        .with_cell_model(WeightedGaussianModel::new(sigma_mu * sigma_mu)?)
+        .with_scale_model(PinnedSigma::new(0.04)?)
         .fit(&x, &y)?;
 
     println!(

@@ -16,6 +16,7 @@
 use std::sync::Arc;
 
 use crate::engine::data::Metric;
+use crate::engine::error::Result;
 use crate::extensions::coord::{CoordinateDistribution, EuclideanNormal, WrappedNormal};
 
 /// How the core treats one column's values: valid input domain, fit-time scaling
@@ -43,7 +44,7 @@ pub(crate) trait ColumnSemantics: std::fmt::Debug {
     /// geometry, used when the caller supplies no explicit `with_coords`. Real
     /// columns pair with `EuclideanNormal`, angle columns with
     /// `WrappedNormal`.
-    fn default_coord_law(&self, sigma_c: f64) -> Arc<dyn CoordinateDistribution>;
+    fn default_coord_law(&self, sigma_c: f64) -> Result<Arc<dyn CoordinateDistribution>>;
 }
 
 /// Real-valued column: the `Euclidean` metric (and every one-hot column a
@@ -77,8 +78,8 @@ impl ColumnSemantics for RealColumn {
         (value - min) / (max - min) - 0.5
     }
 
-    fn default_coord_law(&self, sigma_c: f64) -> Arc<dyn CoordinateDistribution> {
-        Arc::new(EuclideanNormal::new(sigma_c))
+    fn default_coord_law(&self, sigma_c: f64) -> Result<Arc<dyn CoordinateDistribution>> {
+        Ok(Arc::new(EuclideanNormal::new(sigma_c)?))
     }
 }
 
@@ -100,8 +101,8 @@ impl ColumnSemantics for AngleColumn {
         value
     }
 
-    fn default_coord_law(&self, sigma_c: f64) -> Arc<dyn CoordinateDistribution> {
-        Arc::new(WrappedNormal::new(sigma_c))
+    fn default_coord_law(&self, sigma_c: f64) -> Result<Arc<dyn CoordinateDistribution>> {
+        Ok(Arc::new(WrappedNormal::new(sigma_c)?))
     }
 }
 
@@ -137,8 +138,8 @@ impl ColumnSemantics for PreparedColumn {
         value
     }
 
-    fn default_coord_law(&self, sigma_c: f64) -> Arc<dyn CoordinateDistribution> {
-        Arc::new(EuclideanNormal::new(sigma_c))
+    fn default_coord_law(&self, sigma_c: f64) -> Result<Arc<dyn CoordinateDistribution>> {
+        Ok(Arc::new(EuclideanNormal::new(sigma_c)?))
     }
 }
 

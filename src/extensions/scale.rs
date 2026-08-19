@@ -247,7 +247,36 @@ pub(crate) fn sigma_sq_gamma_params(nu: f64, lambda: f64, rss: f64, n: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::error::AddiVortesError;
     use crate::test_support::{assert_abs_eq, assert_rel_eq};
+
+    /// The global-σ² models check (ν, λ) in every build profile; λ = 0 (the
+    /// zero-residual calibration) is accepted.
+    #[test]
+    fn global_sigma_constructors_reject_out_of_domain_arguments() {
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                GlobalSigma::new(bad, 0.02),
+                Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "nu"
+            ));
+            assert!(matches!(
+                WeightedGlobalSigma::new(bad, 0.02),
+                Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "nu"
+            ));
+        }
+        for bad in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                GlobalSigma::new(6.0, bad),
+                Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "lambda"
+            ));
+            assert!(matches!(
+                WeightedGlobalSigma::new(6.0, bad),
+                Err(AddiVortesError::InvalidHyperparameter { ref name, .. }) if name == "lambda"
+            ));
+        }
+        assert!(GlobalSigma::new(6.0, 0.0).is_ok());
+        assert!(WeightedGlobalSigma::new(6.0, 0.0).is_ok());
+    }
 
     #[test]
     fn sigma_sq_gamma_params_match_hand_values() {

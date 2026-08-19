@@ -53,6 +53,13 @@ pub enum AddiVortesError {
     #[error("feature in column {col} is constant (zero range)")]
     DegenerateFeature { col: usize },
 
+    /// The response is an exact linear function of the features, so the
+    /// residual variance is zero and the σ² prior scale calibrates to λ = 0,
+    /// which the selected scale model cannot accept (the H variance
+    /// calibration would pin every variance cell at 0).
+    #[error("response is an exact linear function of the features (zero residual variance)")]
+    DegenerateResidual {},
+
     /// A categorical column holds a value that was not present during fitting.
     #[error("column {col} contains category {value} not seen during fit")]
     UnseenCategory { col: usize, value: f64 },
@@ -84,6 +91,12 @@ pub enum AddiVortesError {
     /// batch-level custom assigners must opt in).
     #[error("assigner `{assigner}` does not support soft membership (no dense per-cell keys)")]
     MembershipUnsupported { assigner: String },
+
+    /// A calibration battery's successive-conditional simulator never emitted
+    /// a statistic the marginal-conditional draw produced
+    /// ([`calibration::getting_it_right`](crate::calibration::getting_it_right)).
+    #[error("successive-conditional simulator never emitted statistic `{statistic}`")]
+    MissingStatistic { statistic: String },
 
     /// A user-supplied extension (`CellModel`/`ResponseModel`) returned an error.
     #[error("error from a user extension")]
@@ -155,6 +168,7 @@ impl PartialEq for AddiVortesError {
             ) => a == c && b == d,
             (DegenerateResponse {}, DegenerateResponse {}) => true,
             (DegenerateFeature { col: a }, DegenerateFeature { col: b }) => a == b,
+            (DegenerateResidual {}, DegenerateResidual {}) => true,
             (UnseenCategory { col: a, value: b }, UnseenCategory { col: c, value: d }) => {
                 a == c && b == d
             }
@@ -195,6 +209,7 @@ impl PartialEq for AddiVortesError {
             (MembershipUnsupported { assigner: a }, MembershipUnsupported { assigner: b }) => {
                 a == b
             }
+            (MissingStatistic { statistic: a }, MissingStatistic { statistic: b }) => a == b,
 
             // Any two *different* variants are never equal.
             _ => false,
@@ -205,6 +220,61 @@ impl PartialEq for AddiVortesError {
 /// Shorthand: `Result<T>` means `Result<T, AddiVortesError>`, so functions in this crate
 /// can write `-> Result<Foo>` instead of spelling out the error type every time.
 pub type Result<T> = std::result::Result<T, AddiVortesError>;
+
+/// Lift an extension-point error into the crate's error: a component whose
+/// error type is already [`AddiVortesError`] (every shelf component that can
+/// fail) surfaces its own variant; any other error is carried as
+/// [`AddiVortesError::Extension`].
+pub(crate) fn from_extension<E: std::error::Error + Send + Sync + 'static>(
+    error: E,
+) -> AddiVortesError {
+    let any: &dyn std::any::Any = &error;
+    match any.downcast_ref::<AddiVortesError>() {
+        Some(native) => native.clone(),
+        None => AddiVortesError::Extension {
+            source: Arc::new(error),
+        },
+    }
+}
+
+/// The shelf constructors' shared argument check: `value` must be finite and
+/// strictly positive, otherwise [`AddiVortesError::InvalidHyperparameter`]
+/// naming the argument.
+pub(crate) fn require_positive_finite(name: &str, value: f64) -> Result<f64> {
+    if value.is_finite() && value > 0.0 {
+        Ok(value)
+    } else {
+        Err(AddiVortesError::InvalidHyperparameter {
+            name: name.into(),
+            reason: format!("must be finite and positive, got {value}"),
+        })
+    }
+}
+
+/// As [`require_positive_finite`], but zero is allowed.
+pub(crate) fn require_non_negative_finite(name: &str, value: f64) -> Result<f64> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(value)
+    } else {
+        Err(AddiVortesError::InvalidHyperparameter {
+            name: name.into(),
+            reason: format!("must be finite and non-negative, got {value}"),
+        })
+    }
+}
+
+/// The count sibling of [`require_positive_finite`]: `value` must be at least
+/// 1.
+pub(crate) fn require_at_least_one(name: &str, value: usize) -> Result<usize> {
+    if value >= 1 {
+        Ok(value)
+    } else {
+        Err(AddiVortesError::InvalidHyperparameter {
+            name: name.into(),
+            reason: "must be at least 1".into(),
+        })
+    }
+}
 
 /// Validation failure while deserialising a saved value (`serde` feature): a
 /// corrupt or hand-edited payload was rejected. Never public; serde surfaces
@@ -288,6 +358,10 @@ mod tests {
                 "feature in column 2 is constant (zero range)",
             ),
             (
+                AddiVortesError::DegenerateResidual {},
+                "response is an exact linear function of the features (zero residual variance)",
+            ),
+            (
                 AddiVortesError::UnseenCategory { col: 1, value: 9.0 },
                 "column 1 contains category 9 not seen during fit",
             ),
@@ -322,6 +396,12 @@ mod tests {
                     reason: "column 3 is out of range".into(),
                 },
                 "invalid metric group: column 3 is out of range",
+            ),
+            (
+                AddiVortesError::MissingStatistic {
+                    statistic: "sigma_sq".into(),
+                },
+                "successive-conditional simulator never emitted statistic `sigma_sq`",
             ),
             (
                 AddiVortesError::Extension {
