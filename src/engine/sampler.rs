@@ -247,7 +247,13 @@ impl Sampler {
     ) -> Result<Self> {
         let p_enc = x_enc.n_cols();
         let n = x_enc.n_rows();
-        let sigma_mu_sq = scaler::sigma_mu_sq(config.k, config.m);
+        // The cell-prior width dial: a directly-set σ_μ wins over the k-rule
+        // (and, below, over the family rule); unset, both expressions are
+        // exactly the pre-dial ones, so the default chain is bit-identical.
+        let sigma_mu_sq = match config.cell_prior_sd {
+            Some(sigma_mu) => sigma_mu * sigma_mu,
+            None => scaler::sigma_mu_sq(config.k, config.m),
+        };
         // (For BinaryProbit the latent-scale σ_μ² below overrides what the
         // ModelCtx carries; the built-in moves never read it.)
 
@@ -340,6 +346,13 @@ impl Sampler {
         let family_sigma_mu_sq = match family {
             crate::engine::model::ResponseFamily::Gaussian
             | crate::engine::model::ResponseFamily::RobustT { .. } => sigma_mu_sq,
+            // A directly-set σ_μ wins over the family rule too: the dial is
+            // the model file saying what the prior width is.
+            crate::engine::model::ResponseFamily::BinaryProbit
+                if config.cell_prior_sd.is_some() =>
+            {
+                sigma_mu_sq
+            }
             crate::engine::model::ResponseFamily::BinaryProbit => {
                 let sigma_mu = 3.0 / (config.k * (config.m as f64).sqrt());
                 sigma_mu * sigma_mu
@@ -1409,6 +1422,24 @@ mod tests {
         assert_eq!(
             weighted_chain_bits(composed, 8),
             weighted_chain_bits(product, 8)
+        );
+    }
+
+    /// The cell-prior width dial, proven bit for bit: a directly-set σ_μ
+    /// equal to the k-rule's own value must sample exactly the k-rule chain.
+    /// The dial threads the same variance to the same places (the cell
+    /// kernel and the ModelCtx) and changes nothing else.
+    #[test]
+    fn cell_prior_dial_matches_its_bit_equal_k_rule_chain() {
+        let (x, y) = toy_data();
+        // The k-rule value for k = 1.5 at m = 4, written as the k-rule's own
+        // expression so both sides carry identical bits.
+        let sigma_mu = 0.5 / (1.5 * (4.0_f64).sqrt());
+        let dialled = Sampler::new(small_config(29).with_cell_prior_sd(sigma_mu), &x, &y).unwrap();
+        let ruled = Sampler::new(small_config(29).with_k(1.5), &x, &y).unwrap();
+        assert_eq!(
+            weighted_chain_bits(dialled, 8),
+            weighted_chain_bits(ruled, 8)
         );
     }
 
