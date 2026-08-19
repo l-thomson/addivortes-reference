@@ -111,12 +111,12 @@ impl AddiVortes {
     ) -> PyResult<FittedModel> {
         let data = to_data(&x)?;
         let response = to_vec(&y);
-        // The data is what the covariate-sized settings are sized by, so the config
-        // is assembled here, not at construction.
-        let config = self.spec.clone().into_config(&data).map_err(err)?;
+        // The data is what the covariate-sized settings are sized by, so the
+        // spec assembles here, not at construction.
+        let spec = self.spec.clone();
         let family = self.response_family().to_string();
         let fitted = py
-            .detach(move || config.fit(&data, &response))
+            .detach(move || spec.fit(&data, &response))
             .map_err(err)?;
         Ok(FittedModel {
             inner: fitted,
@@ -135,10 +135,10 @@ impl AddiVortes {
     ) -> PyResult<Vec<FittedModel>> {
         let data = to_data(&x)?;
         let response = to_vec(&y);
-        let config = self.spec.clone().into_config(&data).map_err(err)?;
+        let spec = self.spec.clone();
         let family = self.response_family().to_string();
         let fits = py
-            .detach(move || config.fit_chains(&data, &response, n_chains))
+            .detach(move || spec.fit_chains(&data, &response, n_chains))
             .map_err(err)?;
         Ok(fits
             .into_iter()

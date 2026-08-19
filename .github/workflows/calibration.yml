@@ -30,8 +30,8 @@ on:
       # set of files: a list of names drifts into silent under-coverage as
       # files move; a glob cannot.
       - "src/**"
-      # The battery's own drivers: the calibration_acceptance binary lives in
-      # tests/, so a change to it must trigger the gate that runs it.
+      # Integration tests are chain-sensitive too (the golden vectors live
+      # beside them), so a change there must trigger the gate.
       - "tests/**"
       # A rand / rand_core / rand_distr / libm bump is chain-altering by
       # definition (the reproducibility contract in src/lib.rs), so the
@@ -90,7 +90,7 @@ jobs:
             'test(/^stat_gates::(sbc_ranks|geweke|pure_prior)/)' \
             'test(/^stat_gates::battery_public_driver/)' \
             'test(/^extensions::inclusion::dart::tests::isolated_update/)' \
-            'binary(calibration_acceptance)'
+            'test(/^calibration_acceptance::/)'
           do
             echo "::group::${selector}"
             if ! cargo +1.85.1 nextest run --locked --cargo-profile determinism \

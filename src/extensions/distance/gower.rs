@@ -219,24 +219,26 @@ mod tests {
             y.push(2.0 * numeric + if i % 3 == 0 { 0.5 } else { 0.0 });
         }
         let x = crate::engine::data::Data::from_rows(&rows).unwrap();
-        let model = crate::AddiVortesConfig::new(42)
-            .with_m(10)
-            .with_burn_in(20)
-            .with_draws(30)
-            .with_omega(1.5)
-            .with_metrics(vec![
-                crate::engine::data::Metric::Euclidean,
-                crate::engine::data::Metric::Categorical,
+        let model = crate::engine::builder::SamplerBuilder::new(
+            crate::AddiVortesConfig::new(42)
+                .with_m(10)
+                .with_burn_in(20)
+                .with_draws(30)
+                .with_omega(1.5)
+                .with_metrics(vec![
+                    crate::engine::data::Metric::Euclidean,
+                    crate::engine::data::Metric::Categorical,
+                ]),
+        )
+        .with_distance(
+            Gower::new(vec![
+                GowerKind::Numeric,
+                GowerKind::Categorical { levels: 2 },
             ])
-            .with_distance(
-                Gower::new(vec![
-                    GowerKind::Numeric,
-                    GowerKind::Categorical { levels: 2 },
-                ])
-                .unwrap(),
-            )
-            .fit(&x, &y)
-            .unwrap();
+            .unwrap(),
+        )
+        .fit(&x, &y)
+        .unwrap();
         let predictions = model.predict(&x).unwrap();
         assert!(predictions.iter().all(|p| p.is_finite()));
         assert!(
@@ -259,24 +261,26 @@ mod tests {
             y.push(i as f64);
         }
         let x = crate::engine::data::Data::from_rows(&rows).unwrap();
-        let err = crate::AddiVortesConfig::new(7)
-            .with_m(5)
-            .with_burn_in(5)
-            .with_draws(5)
-            .with_omega(1.5)
-            .with_metrics(vec![
-                crate::engine::data::Metric::Euclidean,
-                crate::engine::data::Metric::Categorical,
+        let err = crate::engine::builder::SamplerBuilder::new(
+            crate::AddiVortesConfig::new(7)
+                .with_m(5)
+                .with_burn_in(5)
+                .with_draws(5)
+                .with_omega(1.5)
+                .with_metrics(vec![
+                    crate::engine::data::Metric::Euclidean,
+                    crate::engine::data::Metric::Categorical,
+                ]),
+        )
+        .with_distance(
+            Gower::new(vec![
+                GowerKind::Numeric,
+                GowerKind::Categorical { levels: 5 }, // the fit sees 2
             ])
-            .with_distance(
-                Gower::new(vec![
-                    GowerKind::Numeric,
-                    GowerKind::Categorical { levels: 5 }, // the fit sees 2
-                ])
-                .unwrap(),
-            )
-            .fit(&x, &y)
-            .unwrap_err();
+            .unwrap(),
+        )
+        .fit(&x, &y)
+        .unwrap_err();
         assert!(matches!(
             err,
             crate::engine::error::AddiVortesError::NonFiniteDistance { .. }

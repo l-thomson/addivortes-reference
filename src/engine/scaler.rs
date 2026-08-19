@@ -48,6 +48,7 @@ impl FittedScaler {
     /// (`Sampler::pinned_prior`): the caller's data is already in the
     /// sampler's scaled coordinate system, so y maps [−0.5, 0.5] onto itself
     /// and no column is rescaled or encoded.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn identity(p: usize, metrics: Vec<Metric>) -> Self {
         debug_assert_eq!(metrics.len(), p);
         let (x_min, x_max): (Vec<f64>, Vec<f64>) = metrics

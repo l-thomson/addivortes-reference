@@ -1,10 +1,15 @@
-//! The extension points: everything a researcher can swap.
+//! The component shelves: the crate-internal seams behind the engine.
 //!
-//! Each submodule is one extension point and has the same shape: the `.rs`
-//! file holds the trait you implement, and the folder beside it is the *shelf*:
-//! one file per shipped implementation. A copy-paste starting point for each
-//! lives in `examples/template_<name>.rs`, and each has a conformance check in
-//! [`crate::conformance`].
+//! Each submodule is one seam and has the same shape: the `.rs` file holds
+//! the trait, and the folder beside it is the *shelf*: one file per shipped
+//! implementation. Model files and the spec layer wire shelf entries through
+//! `engine::builder`; each entry keeps a conformance check in
+//! `crate::conformance` (test builds).
+//!
+//! The shelf is inventory: entries keep their introspection accessors and
+//! re-exports even when only their gates or the feature-gated spec layer
+//! read them, so the seams stay uniform across builds.
+#![allow(dead_code, unused_imports)]
 //!
 //! | Point | Trait | Swap it when |
 //! |---|---|---|

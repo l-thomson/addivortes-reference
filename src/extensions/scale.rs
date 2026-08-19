@@ -47,6 +47,7 @@ mod pinned;
 mod weighted_global_sigma;
 
 pub use global_sigma::GlobalSigma;
+#[allow(unused_imports)]
 pub use h_variance::{HVariance, h_variance_prior};
 pub use pinned::PinnedSigma;
 pub use weighted_global_sigma::WeightedGlobalSigma;
@@ -157,7 +158,7 @@ impl<'a> ScaleCtx<'a> {
 
     /// This sweep's response-side accumulation weights
     /// (dimensionless relative weights, ascending index), as written by the
-    /// [`ResponseModel::augment`](crate::response::ResponseModel::augment) hook that ran just before this update,
+    /// [`ResponseModel::augment`](crate::extensions::response::ResponseModel::augment) hook that ran just before this update,
     /// `None` when no kernel step is attached (the working likelihood is
     /// unit-weight). A scale model whose σ² draw must stay consistent with
     /// a weight-producing response family reads them here (the shelf
@@ -169,7 +170,7 @@ impl<'a> ScaleCtx<'a> {
 
 /// The pluggable scale/precision supplier: generalises the single
 /// global σ² Gibbs draw. Updated once per sweep at the pinned point (after
-/// [`ResponseModel::augment`](crate::response::ResponseModel::augment), before the inclusion update and the j-loop),
+/// [`ResponseModel::augment`](crate::extensions::response::ResponseModel::augment), before the inclusion update and the j-loop),
 /// receiving a [`ScaleCtx`]: the scaled design plus the shared backfit
 /// machinery, so a multiplicatively-composed variance ensemble
 /// (H-AddiVortes) runs its own backfitting inside `update` as an ordinary
@@ -218,7 +219,7 @@ pub trait ScaleModel: std::fmt::Debug + Send + Sync {
     /// would therefore always say "homoscedastic", and the mispairing would
     /// surface as a panic several sweeps later.
     ///
-    /// Same role as [`CellModel::cell_basis`](crate::cell_model::CellModel::cell_basis):
+    /// Same role as [`CellModel::cell_basis`](crate::extensions::cell_model::CellModel::cell_basis):
     /// a claim the engine reads up front, so it can assemble the pairing the
     /// caller should never have to know about.
     fn heteroscedastic(&self) -> bool {

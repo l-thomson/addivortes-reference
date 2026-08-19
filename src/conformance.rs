@@ -39,6 +39,10 @@
 //!
 //! Everything here is deterministic given the RNG you pass in.
 
+// Test-build infrastructure: each shelf entry exercises its own check
+// suite, so any single build uses a subset.
+#![allow(dead_code)]
+
 use crate::engine::data::Data;
 use crate::engine::error::Result;
 use crate::engine::mathsfn;

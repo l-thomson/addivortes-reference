@@ -50,8 +50,7 @@ fn main() -> addivortes::Result<()> {
 }
 ```
 
-The full API documentation, including every extension point, is the rustdoc:
-`cargo doc --open`.
+The full API documentation is the rustdoc: `cargo doc --open`.
 
 Per-column input types via `with_metrics`: ordinary numbers (`Euclidean`),
 angles (`Spherical`), categories (`Categorical`, one-hot encoded internally),
@@ -61,7 +60,7 @@ preparation; see the `distance` module docs).
 With the `serde` cargo feature, fitted models save and load through any serde
 format with bit-identical predictions (for JSON, enable `serde_json`'s
 `float_roundtrip` feature); loading validates the payload, and models fitted
-with custom extension points refuse to serialise.
+with non-default components refuse to serialise.
 
 ## Python
 
@@ -127,20 +126,20 @@ use, bit for bit.
 
 ## Extending
 
-The engine exposes ten extension points, all public: structural moves,
-coordinate laws, distance/assignment, variable inclusion, cell payload
-family, response family, scale/precision, count priors, cell basis, and
-membership. Every point has the same shape: a trait you implement, a shelf
-of shipped implementations beside it, a copy-paste template under
-`examples/`, and a one-command conformance check, with the public Geweke/SBC
-validation battery behind them for components destined for real inference.
-External crates validate custom components with no engine access:
-`tests/calibration_acceptance.rs` is the worked example, and it compiles
-against the public surface only.
+The engine is sealed: its component seams (moves, distances, coordinate
+laws, inclusion, cell models, response augmentation, scale models, count
+priors, bases, membership) are crate-internal, reached only by the crate's
+own model files. Callers select shipped behaviour as data: the plain
+`AddiVortesConfig` for hyperparameters, metrics and the response family,
+and (with the `serde` feature) `config_spec::ConfigSpec` for every
+shelf-selectable component, the same surface the R and Python bindings
+pass through. New shelf entries are contributions to this crate, gated by
+the per-component conformance checks and the Geweke/SBC battery.
 
-The crate-level rustdoc's "Extending" section is the entry point; each
-point's module documents what you implement, what the engine provides, what
-is on the shelf, and the sources.
+For research needs beyond the shelf, drive the loop directly: construct a
+`Sampler`, then alternate `set_response` and `step` from your own outer
+Gibbs sampler (worked example: `examples/template_embed.rs`). The
+crate-level rustdoc's "Extending" section is the entry point.
 
 ## Defaults
 

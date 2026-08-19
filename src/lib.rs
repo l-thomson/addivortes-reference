@@ -54,75 +54,32 @@
 //!
 //! # Extending
 //!
-//! The crate has ten extension points. Each has the same shape: a trait you
-//! implement, a shelf of shipped implementations beside it, a copy-paste
-//! template in `examples/`, and a one-command conformance check. Every default
-//! is replaceable; the paper's method is one shelf entry.
-//! The workflow is the same three steps on every point:
+//! The engine is sealed: the component seams (moves, distances, coordinate
+//! laws, inclusion, cell models, response augmentation, scale models, count
+//! priors, bases, membership) are crate-internal, reached only by the
+//! crate's own model files. Callers select shipped behaviour as data: the
+//! plain [`AddiVortesConfig`] for hyperparameters, metrics and the response
+//! family, and (with the `serde` feature) [`config_spec::ConfigSpec`] for
+//! every shelf-selectable component, the same surface the R and Python
+//! bindings pass through.
 //!
-//! 1. copy the point's template (`examples/template_<point>.rs`), rename it,
-//!    and fill the marked blocks with your maths;
-//! 2. run it: each template is its own conformance check, printing
-//!    plain-language pass/fail verdicts in seconds
-//!    (`cargo run --example template_moves`);
-//! 3. only if the component is destined for real inference, run the
-//!    statistical battery ([`calibration`]): the conformance checks catch
-//!    mechanical faults, the battery catches wrong maths.
-//!
-//! Each point's module documents what you implement, what the engine
-//! provides, what is on the shelf, which conformance check applies, and the
-//! sources. Three rules keep a custom component's chains reproducible (the
-//! conformance checks verify the mechanical ones):
-//!
-//! - route every transcendental in a structure ratio through [`mathsfn`]
-//!   (`ln`, `exp`, …), never `f64::ln`: std float results are
-//!   platform-dependent and break bit-exact reproducibility;
-//! - take all randomness from the `&mut dyn rand_core::Rng` you are handed:
-//!   hidden state or system entropy breaks the same-seed contract;
-//! - look everything up by global covariate index (a tessellation's `dims`
-//!   hold global indices), never by local slot position.
-//!
-//! When no point fits: first check the idea is not a
-//! [`ResponseModel`](response::ResponseModel) augmentation in disguise (most
-//! are); otherwise embed, driving [`Sampler::step`] from your own outer Gibbs
-//! loop through [`Sampler::set_response`], so the engine becomes one
-//! conditional inside your sampler and the novel block stays in your crate
-//! (worked example: `examples/template_embed.rs`). An in-sweep hook is not
-//! offered. Out of scope: non-Voronoi base learners, non-augmentable
-//! likelihoods, within-chain parallelism.
+//! For research needs beyond the shelf, drive the loop directly: construct a
+//! [`Sampler`], then alternate [`Sampler::set_response`] and
+//! [`Sampler::step`] from your own outer Gibbs loop, so the engine becomes
+//! one conditional inside your sampler and the novel block stays in your
+//! crate (worked example: `examples/template_embed.rs`). The loop speaks the
+//! caller's response scale and consumes none of your RNG. Two limits are
+//! deliberate: the loop cannot rewire membership or cell internals, and an
+//! in-sweep hook is not offered. Out of scope: non-Voronoi base learners,
+//! non-augmentable likelihoods, within-chain parallelism.
 //!
 //! # Crate map
 //!
 //! `src/engine/` is the fixed machinery: the Gibbs backfitter, the
-//! tessellation, the scaler/encoder, the fitted-model API. Extending the model
-//! never means editing it. `src/extensions/` holds the ten points, one folder
-//! each: the `.rs` file is the trait you implement, and the folder beside it is
-//! the shelf.
-//!
-//! | Point (`src/extensions/`) | Trait | Shelf (one file per approach) | Default (paper) | Select via |
-//! |---|---|---|---|---|
-//! | `moves` | `ProposalMove` | `stone_gosling` (the six paper moves) | `stone_gosling` | `with_move_set` |
-//! | `coord` | `CoordinateDistribution` | `normal`, `wrapped_normal` | `normal` | `with_coords` |
-//! | `distance` | `PairwiseDistance`, `CellAssigner` | `euclidean`, `spherical`, `per_column`, `gower`, `manhattan`, `minkowski`, `cosine`, `mahalanobis` | `per_column` (all-Euclidean = `euclidean`) | `with_distance` |
-//! | `inclusion` | `InclusionModel` | `uniform`, `weighted`, `dart` | `uniform` | `with_inclusion` |
-//! | `cell_model` | `CellModel`, `CellStats` | `gaussian`, `weighted_gaussian`, `inv_chi_sq` | `gaussian` | `with_cell_model` |
-//! | `response` | `ResponseModel` | `albert_chib`, `robust_t` | none (Gaussian) | `with_response_model` |
-//! | `scale` | `ScaleModel` | `global_sigma`, `pinned`, `weighted_global_sigma`, `h_variance` | `global_sigma` | `with_scale_model` |
-//! | `count_priors` | `CountPriors` | `shifted_poisson_binomial` | `shifted_poisson_binomial` | `with_count_priors` |
-//! | `basis` | `CellBasis` (+ `CellModel`) | `linear` | constant cells | `with_cell_basis` (+ `with_cell_model`) |
-//! | `membership` | `MembershipKernel` | `softmax` | hard membership | `with_membership` |
-//!
-//! Shelf files are named for the method they implement (`euclidean`,
-//! `gaussian`, `stone_gosling`). The table above marks the paper's entry and
-//! the fit-time default; each file's own docs repeat it.
-//!
-//! Templates live in `examples/` rather than beside their point, because an
-//! example compiles against the public API only: exactly the constraint an
-//! external extension faces.
-//!
-//! Validation sits in two modules: [`conformance`] (per-component `check_*`
-//! suites you run against your own type) and [`calibration`] (the externalised
-//! Geweke/SBC drivers, for components destined for real inference).
+//! tessellation, the scaler/encoder, the fitted-model API. `src/extensions/`
+//! holds the crate-internal component shelves, one folder per seam.
+//! `src/models/` holds one readable file per shipped model, composed from
+//! engine calls through the crate-internal wiring surface.
 //!
 //! # Fidelity to the paper
 //!
@@ -141,8 +98,13 @@
 // its public types are re-exported at the crate root below.
 mod engine;
 
-pub mod calibration;
-pub mod conformance;
+// The statistical batteries and per-component conformance checks: crate
+// infrastructure for the shelf's own gates, compiled with them.
+#[cfg(test)]
+mod calibration;
+#[cfg(test)]
+mod conformance;
+
 pub mod diagnostics;
 
 // The data-only config surface the language bindings pass through, so that a
@@ -150,8 +112,8 @@ pub mod diagnostics;
 #[cfg(feature = "serde")]
 pub mod config_spec;
 
-// The extension points: the ten swappable surfaces. Private module; each point
-// is re-exported at the crate root below so import paths stay short.
+// The component shelves: crate-internal seams, reached by the model files
+// and the spec layer through `engine::builder`.
 mod extensions;
 
 // The model-files surface, one file per model. Crate-private until the models
@@ -171,32 +133,8 @@ pub use engine::sampler::{Draw, OwnedDraw, Sampler};
 pub use engine::scaler::FittedScaler;
 pub use engine::tessellation::Tessellation;
 
-// The extension points: unconditionally public,
-// the whole surface is snapshotted by the public-api CI gate. Each point's
-// module is re-exported here so its shelf keeps a short import path
-// (`addivortes::cell_model::GaussianCellModel`).
-pub use extensions::{basis, cell_model, count_priors, response, scale};
-
-pub use extensions::distance::{
-    AssignmentCache, AssignmentDelta, CellAssigner, ColumnMetrics, Cosine, Euclidean, Gower,
-    GowerKind, Mahalanobis, Manhattan, Minkowski, PairwiseDistance, Spherical,
-};
-
-pub use extensions::coord::{CoordinateDistribution, EuclideanNormal, WrappedNormal};
-
-pub use extensions::inclusion::{
-    DartInclusion, InclusionModel, InclusionUsage, UniformInclusion, WeightedInclusion,
-};
-
-pub use extensions::membership::{MembershipKernel, SoftmaxKernel};
-
-pub use extensions::count_priors::{CountPriors, ShiftedPoissonBinomial};
-
-pub use extensions::moves::{
-    AddCentre, AddDimension, Change, ModelCtx, MoveSet, MoveSetBuilder, Proposal, ProposalMove,
-    RemoveCentre, RemoveDimension, Reverse, Swap,
-};
-
+#[cfg(test)]
+mod calibration_acceptance;
 #[cfg(test)]
 mod gate_tests;
 #[cfg(test)]

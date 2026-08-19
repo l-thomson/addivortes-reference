@@ -22,7 +22,7 @@
 //! default (and any future retune of it) is what takes effect. A binding never
 //! copies a default value, which is the other half of how mirrors drift.
 //!
-//! # Late binding: why [`into_config`](ConfigSpec::into_config) takes the data
+//! # Late binding: why [`fit`](ConfigSpec::fit) takes the data
 //!
 //! Half the shelf's constructors take arguments that do not exist until the data
 //! does — `UniformInclusion::new(p)` and `DartInclusion::new(_, p)` need the
@@ -57,6 +57,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::engine::builder::SamplerBuilder;
 use crate::engine::config::AddiVortesConfig;
 use crate::engine::data::{Data, Metric};
 use crate::engine::error::{AddiVortesError, Result};
@@ -83,11 +84,14 @@ fn invalid(name: &str, reason: impl Into<String>) -> AddiVortesError {
     }
 }
 
-/// Reject a non-positive or non-finite scalar under the spec's own dotted
-/// field name (`scale.sigma_sq`, `coords.sigma_c`, …), so a binding's user
-/// sees the key they set rather than the constructor argument behind it. The
-/// shelf constructors check the same condition themselves; this runs first
-/// purely for the message.
+/// Reject a value that a shelf constructor would only `debug_assert`.
+///
+/// Several constructors (`EuclideanNormal`, `SoftmaxKernel`, `PinnedSigma`,
+/// `LinearGaussianModel`, …) check their arguments with `debug_assert!`, and
+/// `DartInclusion::new` uses a hard `assert!`. Neither is acceptable underneath
+/// a pass-through: in a release build the first silently accepts a nonsense
+/// value and the second **aborts the host process** from a bad Python dict. The
+/// spec therefore validates every scalar itself, before any constructor sees it.
 fn positive_finite(name: &str, value: f64) -> Result<f64> {
     if !value.is_finite() || value <= 0.0 {
         return Err(invalid(
@@ -101,7 +105,7 @@ fn positive_finite(name: &str, value: f64) -> Result<f64> {
 /// A complete, data-only description of an [`AddiVortesConfig`]: the mandatory
 /// seed plus every shelf-selectable knob as an `Option` (unset = the crate
 /// default). Deserialise one from a binding's native map, then call
-/// [`into_config`](ConfigSpec::into_config).
+/// [`fit`](ConfigSpec::fit).
 ///
 /// `deny_unknown_fields` turns a typo'd key into a loud error rather than a
 /// silently ignored setting — the pass-through's safety net. A misspelt
@@ -311,13 +315,13 @@ impl From<GowerColumnSpec> for GowerKind {
 impl DistanceSpec {
     /// Apply this geometry to `config`, validating any structured payload with
     /// the crate's own rules and messages.
-    fn apply(self, config: AddiVortesConfig) -> Result<AddiVortesConfig> {
+    fn apply(self, builder: SamplerBuilder) -> Result<SamplerBuilder> {
         Ok(match self {
-            DistanceSpec::Euclidean => config.with_distance(Euclidean),
-            DistanceSpec::Manhattan => config.with_distance(Manhattan),
-            DistanceSpec::Cosine => config.with_distance(Cosine),
-            DistanceSpec::Spherical => config.with_distance(Spherical),
-            DistanceSpec::Minkowski { p } => config.with_distance(Minkowski::new(p)?),
+            DistanceSpec::Euclidean => builder.with_distance(Euclidean),
+            DistanceSpec::Manhattan => builder.with_distance(Manhattan),
+            DistanceSpec::Cosine => builder.with_distance(Cosine),
+            DistanceSpec::Spherical => builder.with_distance(Spherical),
+            DistanceSpec::Minkowski { p } => builder.with_distance(Minkowski::new(p)?),
             DistanceSpec::Gower { columns } => {
                 for (i, column) in columns.iter().enumerate() {
                     // A categorical column with no levels is not a column. Left
@@ -332,7 +336,7 @@ impl DistanceSpec {
                     }
                 }
                 let kinds: Vec<GowerKind> = columns.into_iter().map(GowerKind::from).collect();
-                config.with_distance(Gower::new(kinds)?)
+                builder.with_distance(Gower::new(kinds)?)
             }
             DistanceSpec::Mahalanobis { precision } => {
                 let width = precision.len();
@@ -348,7 +352,7 @@ impl DistanceSpec {
                     }
                 }
                 let flat: Vec<f64> = precision.into_iter().flatten().collect();
-                config.with_distance(Mahalanobis::new(flat, width)?)
+                builder.with_distance(Mahalanobis::new(flat, width)?)
             }
         })
     }
@@ -376,6 +380,9 @@ pub enum InclusionSpec {
 impl InclusionSpec {
     /// Everything checkable without the data: α, and the weight *values* (but
     /// not how many of them there should be).
+    ///
+    /// `DartInclusion::new` *panics* on a bad α, so this must run before it: a
+    /// pass-through may not let a bad payload abort the host process.
     fn validate(&self) -> Result<()> {
         match self {
             InclusionSpec::Uniform => Ok(()),
@@ -390,10 +397,10 @@ impl InclusionSpec {
     }
 
     /// `p` is the raw covariate count, taken from the data.
-    fn apply(self, config: AddiVortesConfig, p: usize) -> Result<AddiVortesConfig> {
+    fn apply(self, builder: SamplerBuilder, p: usize) -> Result<SamplerBuilder> {
         self.validate()?;
         Ok(match self {
-            InclusionSpec::Uniform => config.with_inclusion(UniformInclusion::new(p)),
+            InclusionSpec::Uniform => builder.with_inclusion(UniformInclusion::new(p)),
             InclusionSpec::Weighted { weights } => {
                 if weights.len() != p {
                     return Err(invalid(
@@ -404,9 +411,9 @@ impl InclusionSpec {
                         ),
                     ));
                 }
-                config.with_inclusion(WeightedInclusion::new(weights))
+                builder.with_inclusion(WeightedInclusion::new(weights))
             }
-            InclusionSpec::Dart { alpha } => config.with_inclusion(DartInclusion::new(alpha, p)?),
+            InclusionSpec::Dart { alpha } => builder.with_inclusion(DartInclusion::new(alpha, p)?),
         })
     }
 }
@@ -440,9 +447,9 @@ pub enum ScaleSpec {
 }
 
 impl ScaleSpec {
-    fn apply(self, config: AddiVortesConfig) -> Result<AddiVortesConfig> {
+    fn apply(self, builder: SamplerBuilder) -> Result<SamplerBuilder> {
         Ok(match self {
-            ScaleSpec::Pinned { sigma_sq } => config.with_scale_model(PinnedSigma::new(
+            ScaleSpec::Pinned { sigma_sq } => builder.with_scale_model(PinnedSigma::new(
                 positive_finite("scale.sigma_sq", sigma_sq)?,
             )?),
             ScaleSpec::HVariance {
@@ -470,7 +477,7 @@ impl ScaleSpec {
                         ));
                     }
                 };
-                config.with_scale_model(model)
+                builder.with_scale_model(model)
             }
         })
     }
@@ -489,10 +496,10 @@ pub enum CountPriorsSpec {
 }
 
 impl CountPriorsSpec {
-    fn apply(self, config: AddiVortesConfig) -> AddiVortesConfig {
+    fn apply(self, builder: SamplerBuilder) -> SamplerBuilder {
         match self {
             CountPriorsSpec::ShiftedPoissonBinomial => {
-                config.with_count_priors(ShiftedPoissonBinomial)
+                builder.with_count_priors(ShiftedPoissonBinomial)
             }
         }
     }
@@ -517,7 +524,7 @@ pub enum BasisSpec {
 }
 
 impl BasisSpec {
-    fn apply(self, config: AddiVortesConfig) -> Result<AddiVortesConfig> {
+    fn apply(self, builder: SamplerBuilder) -> Result<SamplerBuilder> {
         Ok(match self {
             BasisSpec::Linear {
                 columns,
@@ -525,7 +532,7 @@ impl BasisSpec {
             } => {
                 let sigma_beta_sq = positive_finite("basis.sigma_beta_sq", sigma_beta_sq)?;
                 let q = 1 + columns.len();
-                config
+                builder
                     .with_cell_basis(LinearBasis::new(columns))
                     .with_cell_model(LinearGaussianModel::new(sigma_beta_sq, q)?)
             }
@@ -546,11 +553,10 @@ pub enum MembershipSpec {
 }
 
 impl MembershipSpec {
-    fn apply(self, config: AddiVortesConfig) -> Result<AddiVortesConfig> {
+    fn apply(self, builder: SamplerBuilder) -> Result<SamplerBuilder> {
         Ok(match self {
-            MembershipSpec::Softmax { tau } => {
-                config.with_membership(SoftmaxKernel::new(positive_finite("membership.tau", tau)?)?)
-            }
+            MembershipSpec::Softmax { tau } => builder
+                .with_membership(SoftmaxKernel::new(positive_finite("membership.tau", tau)?)?),
         })
     }
 }
@@ -593,32 +599,61 @@ impl ConfigSpec {
     /// Minkowski `p < 1`, a non-symmetric Mahalanobis precision, a
     /// non-positive `tau`). The two it cannot make are the *lengths* of the
     /// covariate-sized settings — one coordinate law per column, one inclusion
-    /// weight per column — which only `into_config` can check.
+    /// weight per column; only the data-aware assembly can check those.
     ///
-    /// It runs the same code path as [`into_config`](Self::into_config), with
-    /// the covariate count absent, so the two cannot disagree about what counts
-    /// as valid.
+    /// It runs the same code path as [`fit`](Self::fit), with the covariate
+    /// count absent, so the two cannot disagree about what counts as valid.
     pub fn validate(&self) -> Result<()> {
         self.clone().assemble(None).map(|_| ())
     }
 
-    /// Build and validate the [`AddiVortesConfig`] this spec describes, against
-    /// the data it will be fitted to.
+    /// Fit the model this spec describes.
     ///
     /// Every unset field falls through to the crate default. The data supplies
     /// only what the caller cannot state up front — today, the raw covariate
     /// count `p` that the inclusion and coordinate settings are sized by (see the
     /// module docs on late binding). The assembled config is `validate`d before
-    /// it is returned, so a bad spec fails here rather than mid-fit.
-    pub fn into_config(self, x: &Data) -> Result<AddiVortesConfig> {
+    /// the fit starts, so a bad spec fails here rather than mid-fit.
+    pub fn fit(self, x: &Data, y: &[f64]) -> Result<crate::FittedAddiVortes> {
+        self.into_builder(x)?.fit(x, y)
+    }
+
+    /// The assembled wiring for `x` (crate-internal; `fit` in two halves).
+    pub(crate) fn into_builder(self, x: &Data) -> Result<SamplerBuilder> {
         self.assemble(Some(x.n_cols()))
+    }
+
+    /// Fit `n_chains` independent chains of the model this spec describes
+    /// (the multi-chain entry the convergence diagnostics consume). Chain 0
+    /// runs the spec's own seed, bit-identical to a single [`fit`](Self::fit);
+    /// chains 1.. use seeds derived from it by successive splitmix64 outputs,
+    /// the same derivation as always.
+    pub fn fit_chains(
+        &self,
+        x: &Data,
+        y: &[f64],
+        n_chains: usize,
+    ) -> Result<Vec<crate::FittedAddiVortes>> {
+        if n_chains == 0 {
+            return Err(invalid("n_chains", "must be at least 1"));
+        }
+        let mut state = self.seed;
+        (0..n_chains)
+            .map(|chain| {
+                let mut spec = self.clone();
+                if chain > 0 {
+                    spec.seed = crate::engine::sampler::splitmix64(&mut state);
+                }
+                spec.fit(x, y)
+            })
+            .collect()
     }
 
     /// The one assembly path. `p` is the raw covariate count when the data is
     /// known; `None` means "data-free": the covariate-sized settings still have
     /// their *values* validated, but they are not applied and their lengths are
     /// not checked, because nothing yet knows what the length should be.
-    fn assemble(self, p: Option<usize>) -> Result<AddiVortesConfig> {
+    fn assemble(self, p: Option<usize>) -> Result<SamplerBuilder> {
         let mut config = AddiVortesConfig::new(self.seed);
 
         if let Some(v) = self.m {
@@ -655,21 +690,25 @@ impl ConfigSpec {
             let parsed: Result<Vec<Metric>> = names.iter().map(|n| parse_metric(n)).collect();
             config = config.with_metrics(parsed?);
         }
+        let family = resolve_response_family(self.response_family.as_deref(), self.t_df)?;
+        config = config.with_response_family(family);
+        config.validate()?;
 
+        let mut builder = SamplerBuilder::new(config);
         if let Some(moves) = self.moves {
             if moves.is_empty() {
                 return Err(invalid("moves", "a move set needs at least one move"));
             }
-            let mut builder = MoveSetBuilder::empty();
+            let mut set_builder = MoveSetBuilder::empty();
             for entry in &moves {
-                builder = builder.with_move(
+                set_builder = set_builder.with_move(
                     entry.build()?,
                     positive_finite("moves.weight", entry.weight)?,
                 );
             }
             // `build` enforces the set's own invariants (unique names, mutual
             // pairing, positive weights) with its own messages.
-            config = config.with_move_set(builder.build()?);
+            builder = builder.with_move_set(set_builder.build()?);
         }
         if let Some(coords) = self.coords {
             // The laws' own parameters are checked either way; only the *count*
@@ -687,37 +726,33 @@ impl ConfigSpec {
                         ),
                     ));
                 }
-                config = config.with_coords(laws);
+                builder = builder.with_coords(laws);
             }
         }
         if let Some(distance) = self.distance {
-            config = distance.apply(config)?;
+            builder = distance.apply(builder)?;
         }
         if let Some(inclusion) = self.inclusion {
             // As for `coords`: α and the weight values are checked either way,
             // the length only when the data says what it should be.
             inclusion.validate()?;
             if let Some(p) = p {
-                config = inclusion.apply(config, p)?;
+                builder = inclusion.apply(builder, p)?;
             }
         }
-        let family = resolve_response_family(self.response_family.as_deref(), self.t_df)?;
-        config = config.with_response_family(family);
         if let Some(scale) = self.scale {
-            config = scale.apply(config)?;
+            builder = scale.apply(builder)?;
         }
         if let Some(count_priors) = self.count_priors {
-            config = count_priors.apply(config);
+            builder = count_priors.apply(builder);
         }
         if let Some(basis) = self.basis {
-            config = basis.apply(config)?;
+            builder = basis.apply(builder)?;
         }
         if let Some(membership) = self.membership {
-            config = membership.apply(config)?;
+            builder = membership.apply(builder)?;
         }
-
-        config.validate()?;
-        Ok(config)
+        Ok(builder)
     }
 }
 
@@ -817,9 +852,15 @@ mod tests {
             .collect()
     }
 
-    fn from_json(json: &str) -> Result<AddiVortesConfig> {
+    fn from_json(json: &str) -> Result<SamplerBuilder> {
         let spec: ConfigSpec = serde_json::from_str(json).expect("valid json");
-        spec.into_config(&data())
+        spec.into_builder(&data())
+    }
+
+    /// The plain-config half of a built spec (the component half has no
+    /// value equality; its selections are proven by fitting).
+    fn config_of(json: &str) -> AddiVortesConfig {
+        from_json(json).unwrap().config().clone()
     }
 
     fn err(json: &str) -> String {
@@ -829,32 +870,28 @@ mod tests {
     /// The comparisons in this module are only meaningful because `PartialEq`
     /// covers every field of the config. It did not always: `family`,
     /// `membership` and `basis` were omitted, which would have made
-    /// `assert_eq!(spec.into_config(..), expected)` unable to fail on exactly
+    /// `assert_eq!(config_of(..), expected)` unable to fail on exactly
     /// the selections this spec adds.
     #[test]
     fn a_bare_seed_yields_the_crate_defaults() {
-        assert_eq!(
-            from_json(r#"{"seed": 7}"#).unwrap(),
-            AddiVortesConfig::new(7)
-        );
+        assert_eq!(config_of(r#"{"seed": 7}"#), AddiVortesConfig::new(7));
     }
 
     #[test]
     fn an_unset_field_does_not_override_its_default() {
         assert_eq!(
-            from_json(r#"{"seed": 1, "lambda_c": 5.0}"#).unwrap(),
+            config_of(r#"{"seed": 1, "lambda_c": 5.0}"#),
             AddiVortesConfig::new(1).with_lambda_c(5.0)
         );
     }
 
     #[test]
     fn scalar_knobs_round_trip() {
-        let config = from_json(
+        let config = config_of(
             r#"{"seed": 2, "m": 50, "burn_in": 10, "draws": 20, "thinning": 2,
                 "nu": 4.0, "q": 0.9, "k": 2.0, "lambda_c": 5.0, "omega": 1.5,
                 "sigma_c": 0.5}"#,
-        )
-        .unwrap();
+        );
         let expected = AddiVortesConfig::new(2)
             .with_m(50)
             .with_burn_in(10)
@@ -920,15 +957,13 @@ mod tests {
 
         let (x, y) = (data(), y());
         for json in cases {
-            let spec: ConfigSpec = serde_json::from_str(json).expect("valid json");
-            let config = spec
-                .into_config(&x)
-                .unwrap_or_else(|e| panic!("spec rejected: {e}\n{json}"))
-                .with_m(2)
-                .with_burn_in(2)
-                .with_draws(2);
-            config
-                .fit(&x, &y)
+            // The small-chain knobs ride in as data too.
+            let mut value: serde_json::Value = serde_json::from_str(json).expect("valid json");
+            value["m"] = 2.into();
+            value["burn_in"] = 2.into();
+            value["draws"] = 2.into();
+            let spec: ConfigSpec = serde_json::from_value(value).expect("valid json");
+            spec.fit(&x, &y)
                 .unwrap_or_else(|e| panic!("fit failed: {e}\n{json}"));
         }
     }
@@ -938,29 +973,24 @@ mod tests {
     #[test]
     fn the_basis_spec_derives_q_from_the_columns() {
         let from_spec = from_json(
-            r#"{"seed": 1, "basis": {"type": "linear", "columns": [0, 1], "sigma_beta_sq": 0.1}}"#,
+            r#"{"seed": 1, "m": 2, "burn_in": 2, "draws": 2, "omega": 1.0,
+                "basis": {"type": "linear", "columns": [0, 1], "sigma_beta_sq": 0.1}}"#,
         )
         .unwrap();
-        let by_hand = AddiVortesConfig::new(1)
-            .with_cell_basis(LinearBasis::new(vec![0, 1]))
-            .with_cell_model(LinearGaussianModel::new(0.1, 3).unwrap()); // q = 1 + 2
-        // `Arc::ptr_eq` semantics mean the configs are not `==`; compare the
-        // observable consequence instead.
+        let by_hand = crate::engine::builder::SamplerBuilder::new(
+            AddiVortesConfig::new(1)
+                .with_m(2)
+                .with_burn_in(2)
+                .with_draws(2)
+                .with_omega(1.0),
+        )
+        .with_cell_basis(LinearBasis::new(vec![0, 1]))
+        .with_cell_model(LinearGaussianModel::new(0.1, 3).unwrap()); // q = 1 + 2
+        // Components have no value equality; compare the observable
+        // consequence instead.
         let (x, y) = (data(), y());
-        let a = from_spec
-            .with_m(2)
-            .with_burn_in(2)
-            .with_draws(2)
-            .with_omega(1.0)
-            .fit(&x, &y)
-            .expect("spec-built basis fits");
-        let b = by_hand
-            .with_m(2)
-            .with_burn_in(2)
-            .with_draws(2)
-            .with_omega(1.0)
-            .fit(&x, &y)
-            .expect("hand-built basis fits");
+        let a = from_spec.fit(&x, &y).expect("spec-built basis fits");
+        let b = by_hand.fit(&x, &y).expect("hand-built basis fits");
         assert_eq!(
             a.predict(&x).unwrap(),
             b.predict(&x).unwrap(),
@@ -968,7 +998,9 @@ mod tests {
         );
     }
 
-    /// A bad DART α is an error naming the spec's own key.
+    /// `DartInclusion::new` *panics* on a non-positive alpha. Reaching it from a
+    /// binding payload would abort the host process, so the spec must reject the
+    /// value first — this test would abort the test runner if it regressed.
     #[test]
     fn a_bad_dart_alpha_is_an_error_not_a_process_abort() {
         assert!(
@@ -979,10 +1011,10 @@ mod tests {
         );
     }
 
-    /// Shelf scalars are rejected under the spec's dotted key, before the
-    /// constructor behind them reports the bare argument name.
+    /// The scalars whose constructors only `debug_assert` — in a release build
+    /// they would silently accept nonsense and produce a wrong fit.
     #[test]
-    fn shelf_scalars_are_rejected_under_the_spec_key() {
+    fn scalars_that_are_only_debug_asserted_downstream_are_rejected_here() {
         assert!(
             err(r#"{"seed": 1, "membership": {"type": "softmax", "tau": 0.0}}"#).contains("tau")
         );
@@ -1117,12 +1149,12 @@ mod tests {
         }
     }
 
-    /// `validate()` must not reject anything `into_config` would accept, or a
+    /// `validate()` must not reject anything the data-aware assembly would accept, or a
     /// binding would refuse a legitimate config at construction. In particular
     /// it must not fail the covariate-sized settings just because it cannot know
     /// `p` yet.
     #[test]
-    fn validate_accepts_everything_into_config_accepts() {
+    fn validate_accepts_everything_assembly_accepts() {
         let x = data();
         let good = [
             r#"{"seed": 1}"#,
@@ -1140,8 +1172,8 @@ mod tests {
             let spec: ConfigSpec = serde_json::from_str(json).expect("valid json");
             spec.validate()
                 .unwrap_or_else(|e| panic!("validate() rejected a valid spec: {e}\n{json}"));
-            spec.into_config(&x)
-                .unwrap_or_else(|e| panic!("into_config rejected a valid spec: {e}\n{json}"));
+            spec.into_builder(&x)
+                .unwrap_or_else(|e| panic!("assembly rejected a valid spec: {e}\n{json}"));
         }
     }
 
@@ -1149,14 +1181,14 @@ mod tests {
     /// covariate-sized setting of the wrong length. It passes data-free and fails
     /// once the data says how long it should have been.
     #[test]
-    fn a_wrong_length_passes_validate_and_fails_at_into_config() {
+    fn a_wrong_length_passes_validate_and_fails_with_data() {
         let json = r#"{"seed": 1, "inclusion": {"type": "weighted", "weights": [1.0]}}"#;
         let spec: ConfigSpec = serde_json::from_str(json).unwrap();
         assert!(
             spec.validate().is_ok(),
             "data-free validation cannot know p, so it must not guess"
         );
-        let e = spec.into_config(&data()).unwrap_err().to_string();
+        let e = spec.into_builder(&data()).unwrap_err().to_string();
         assert!(e.contains("p = 2"), "{e}");
     }
 
@@ -1213,8 +1245,7 @@ mod tests {
 
     #[test]
     fn a_resolved_family_reports_its_name() {
-        let config =
-            from_json(r#"{"seed": 1, "response_family": "robust_t", "t_df": 4.0}"#).unwrap();
+        let config = config_of(r#"{"seed": 1, "response_family": "robust_t", "t_df": 4.0}"#);
         assert_eq!(response_family_name(config.response_family()), "robust_t");
     }
 }

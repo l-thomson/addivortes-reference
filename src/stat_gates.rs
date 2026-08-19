@@ -44,6 +44,7 @@ use rand_distr::Distribution;
 
 use crate::AddiVortesConfig;
 use crate::diagnostics::{ks_critical_value, ks_two_sample, sbc_rank};
+use crate::engine::builder::Components;
 use crate::engine::data::{Data, Metric};
 use crate::engine::sampler::{Sampler, expand_seed, splitmix64};
 use crate::engine::tessellation::Tessellation;
@@ -282,22 +283,24 @@ impl GateFixture {
     }
 
     fn sampler(&self, seed: u64, y: Vec<f64>, moves: MoveSetKind) -> Sampler {
-        let mut config = AddiVortesConfig::new(seed)
+        let config = AddiVortesConfig::new(seed)
             .with_m(self.m)
             .with_nu(self.nu)
             .with_omega(self.omega)
             .with_lambda_c(self.lambda_c)
             .with_sigma_c(self.sigma_c)
             .with_k(self.k);
-        if !self.uniform_weights() {
-            config.inclusion = Some(Arc::new(WeightedInclusion::new(self.weights.clone())));
-        }
-        if let Some(tau) = self.tau {
-            config = config
-                .with_membership(crate::extensions::membership::SoftmaxKernel::new(tau).unwrap());
-        }
+        let components = Components {
+            inclusion: (!self.uniform_weights())
+                .then(|| Arc::new(WeightedInclusion::new(self.weights.clone())) as _),
+            membership: self.tau.map(|tau| {
+                Arc::new(crate::extensions::membership::SoftmaxKernel::new(tau).unwrap()) as _
+            }),
+            ..Components::default()
+        };
         Sampler::pinned_prior_for_tests(
             config,
+            components,
             self.x.clone(),
             self.metrics.clone(),
             y,
@@ -514,16 +517,19 @@ fn h_sampler(
     std::sync::Arc<std::sync::Mutex<crate::extensions::scale::HVariance>>,
 ) {
     let base = &fixture.base;
-    let mut config = AddiVortesConfig::new(seed)
+    let config = AddiVortesConfig::new(seed)
         .with_m(base.m)
         .with_nu(base.nu)
         .with_omega(base.omega)
         .with_lambda_c(base.lambda_c)
         .with_sigma_c(base.sigma_c)
         .with_k(base.k);
-    config.cell_model = Some(Arc::new(
-        crate::extensions::cell_model::WeightedGaussianModel::new(base.sigma_mu_sq()).unwrap(),
-    ));
+    let components = Components {
+        cell_model: Some(Arc::new(
+            crate::extensions::cell_model::WeightedGaussianModel::new(base.sigma_mu_sq()).unwrap(),
+        )),
+        ..Components::default()
+    };
     let shared = std::sync::Arc::new(std::sync::Mutex::new(
         crate::extensions::scale::HVariance::new(fixture.m_prime)
             .unwrap()
@@ -532,6 +538,7 @@ fn h_sampler(
     ));
     let sampler = Sampler::pinned_prior_for_tests(
         config,
+        components,
         base.x.clone(),
         base.metrics.clone(),
         y,
@@ -1850,18 +1857,22 @@ fn dart_quantities(
 }
 
 fn dart_sampler(fixture: &GateFixture, seed: u64, y: Vec<f64>) -> Sampler {
-    let mut config = AddiVortesConfig::new(seed)
+    let config = AddiVortesConfig::new(seed)
         .with_m(fixture.m)
         .with_nu(fixture.nu)
         .with_omega(fixture.omega)
         .with_lambda_c(fixture.lambda_c)
         .with_sigma_c(fixture.sigma_c)
         .with_k(fixture.k);
-    config.inclusion = Some(Arc::new(
-        crate::extensions::inclusion::DartInclusion::new(DART_ALPHA, fixture.p()).unwrap(),
-    ));
+    let components = Components {
+        inclusion: Some(Arc::new(
+            crate::extensions::inclusion::DartInclusion::new(DART_ALPHA, fixture.p()).unwrap(),
+        )),
+        ..Components::default()
+    };
     Sampler::pinned_prior_for_tests(
         config,
+        components,
         fixture.x.clone(),
         fixture.metrics.clone(),
         y,
@@ -1940,16 +1951,20 @@ fn run_dart_geweke(correction: bool) -> Vec<crate::calibration::GewekeOutcome> {
     } else {
         // The negative control: the uncorrected conjugate Gibbs update (the
         // naive DART port the exactness warning is about).
-        let mut config = AddiVortesConfig::new(fixture.seed ^ 0xC4A1)
+        let config = AddiVortesConfig::new(fixture.seed ^ 0xC4A1)
             .with_m(fixture.m)
             .with_nu(fixture.nu)
             .with_omega(fixture.omega)
             .with_lambda_c(fixture.lambda_c)
             .with_sigma_c(fixture.sigma_c)
             .with_k(fixture.k);
-        config.inclusion = Some(Arc::new(UncorrectedDart::new(DART_ALPHA, fixture.p())));
+        let components = Components {
+            inclusion: Some(Arc::new(UncorrectedDart::new(DART_ALPHA, fixture.p()))),
+            ..Components::default()
+        };
         Sampler::pinned_prior_for_tests(
             config,
+            components,
             fixture.x.clone(),
             fixture.metrics.clone(),
             y0.clone(),

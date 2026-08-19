@@ -123,14 +123,16 @@ mod tests {
             y.push(if a > 0.5 { 2.0 } else { -1.0 });
         }
         let x = crate::engine::data::Data::from_rows(&rows).unwrap();
-        let model = crate::AddiVortesConfig::new(42)
-            .with_m(10)
-            .with_burn_in(20)
-            .with_draws(30)
-            .with_omega(1.5)
-            .with_distance(Cosine)
-            .fit(&x, &y)
-            .unwrap();
+        let model = crate::engine::builder::SamplerBuilder::new(
+            crate::AddiVortesConfig::new(42)
+                .with_m(10)
+                .with_burn_in(20)
+                .with_draws(30)
+                .with_omega(1.5),
+        )
+        .with_distance(Cosine)
+        .fit(&x, &y)
+        .unwrap();
         let predictions = model.predict(&x).unwrap();
         assert!(predictions.iter().all(|p| p.is_finite()));
     }

@@ -73,19 +73,8 @@ jobs:
       # round trip, custom-extension refusal) only compiles behind `serde`.
       - run: cargo +1.85.1 nextest run --locked --features serde
       - run: cargo +1.85.1 test --doc --locked
-      # The researcher walkthroughs are CI-gated: every extension-point template must
-      # pass its conformance/self-checks end-to-end, unedited; the embed
-      # (outer-Gibbs) example must run end-to-end.
-      - run: cargo +1.85.1 run --example template_moves --locked
-      - run: cargo +1.85.1 run --example template_coord --locked
-      - run: cargo +1.85.1 run --example template_distance --locked
-      - run: cargo +1.85.1 run --example template_inclusion --locked
-      - run: cargo +1.85.1 run --example template_cell_model --locked
-      - run: cargo +1.85.1 run --example template_response --locked
-      - run: cargo +1.85.1 run --example template_scale --locked
-      - run: cargo +1.85.1 run --example template_basis --locked
-      - run: cargo +1.85.1 run --example template_count_priors --locked
-      - run: cargo +1.85.1 run --example template_membership --locked
+      # The embed (outer-Gibbs) walkthrough is CI-gated: it must run
+      # end-to-end, unedited. It is the one public research entry.
       - run: cargo +1.85.1 run --example template_embed --locked
 
   golden:
@@ -335,11 +324,13 @@ jobs:
       # system, asserted from rustdoc JSON, never by eye.
       # Shelf-parity gate: every shelf entry is either reachable from ConfigSpec
       # (and so from every binding) or recorded as deliberately Rust-only. Both
-      # read the rustdoc JSON, so the reference is the compiler, not a list
-      # somebody has to remember to update.
+      # read rustdoc JSON, so the reference is the compiler, not a list
+      # somebody has to remember to update. The shelf is crate-internal, so
+      # parity reads a private-items build; the doc gate keeps the public one.
       - run: |
           cargo rustdoc --lib --all-features -- -Zunstable-options --output-format json
           python3 ci/check-doc-coords.py target/doc/addivortes.json
+          cargo rustdoc --lib --all-features -- -Zunstable-options --output-format json --document-private-items
           python3 ci/check-shelf-parity.py target/doc/addivortes.json
         env:
           RUSTUP_TOOLCHAIN: nightly-2026-06-01
