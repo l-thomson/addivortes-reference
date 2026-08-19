@@ -268,7 +268,9 @@ pub struct FittedAddiVortes {
     membership: Option<Arc<dyn MembershipKernel>>,
     /// Cell basis; `None` = scalar cell payloads at predict.
     basis: Option<Arc<dyn CellBasis>>,
-    /// True when any component axis was set explicitly at fit.
+    /// True when any component axis was set explicitly at fit; the
+    /// serialisation refusal reads it.
+    #[cfg_attr(not(feature = "serde"), allow(dead_code))]
     custom_components: bool,
     warnings: Vec<Warning>,
     in_sample_rmse: f64,

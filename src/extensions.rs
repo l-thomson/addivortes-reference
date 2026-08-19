@@ -6,9 +6,10 @@
 //! `engine::builder`; each entry keeps a conformance check in
 //! `crate::conformance` (test builds).
 //!
-//! The shelf is inventory: entries keep their introspection accessors even
-//! when only their gates read them, so the seams stay uniformly testable.
-#![allow(dead_code)]
+//! The shelf is inventory: entries keep their introspection accessors and
+//! re-exports even when only their gates or the feature-gated spec layer
+//! read them, so the seams stay uniform across builds.
+#![allow(dead_code, unused_imports)]
 //!
 //! | Point | Trait | Swap it when |
 //! |---|---|---|

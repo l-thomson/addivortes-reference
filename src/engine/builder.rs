@@ -71,6 +71,9 @@ pub(crate) struct SamplerBuilder {
     components: Components,
 }
 
+// The wiring surface is inventory: axes stay available whether or not the
+// current build's model files and spec layer use them.
+#[allow(dead_code)]
 impl SamplerBuilder {
     /// Start from a plain-data config; all axes at their defaults.
     pub(crate) fn new(config: AddiVortesConfig) -> Self {
