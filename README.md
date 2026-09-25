@@ -1,5 +1,8 @@
 # addivortes
 
+> Archived. This implementation is superseded by
+> [thiessen](https://github.com/l-thomson/thiessen).
+
 Bayesian additive Voronoi-tessellation regression: a Rust implementation,
 with Python and R bindings.
 
